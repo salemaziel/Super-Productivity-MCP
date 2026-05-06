@@ -25,6 +25,8 @@ Filters, bulk-updates due dates, and adds tags — all in one conversation turn.
 
 Reads resources for context, creates subtasks in batch, starts the timer, bulk-completes tasks, pulls the worklog, and summarizes — a multi-step workflow in a single prompt.
 
+→ [More use cases](docs/use-cases.md)
+
 ## Installation
 
 ### 1. Install the SP Plugin
@@ -71,12 +73,15 @@ Ask your AI assistant: *"Check the Super Productivity connection"*
 | Tool | Description |
 |------|-------------|
 | `create_task` | Create a task (supports SP short syntax) |
-| `get_tasks` | List tasks — filter by project, tag, done, archived, search, `parents_only`, `overdue`, `unscheduled`, `planned_for_today` |
+| `create_task_with_subtasks` | Create a parent task + subtasks in one operation |
+| `get_tasks` | List tasks — filter by project, tag, done, archived, search (title+notes), `parents_only`, `overdue`, `unscheduled`, `planned_for_today`, `recurring_only`, `fields` |
 | `update_task` | Update title, notes, done state, due date, `planned_at`, time, tags |
 | `complete_task` | Mark a task as complete |
+| `delete_task` | Permanently delete a task (parent deletes subtasks too) |
 | `start_task` | Start the time tracker on a task |
 | `stop_task` | Stop the currently running time tracker |
 | `get_current_task` | Get the currently tracked task (null if none) |
+| `plan_tasks_for_today` | Batch plan/unplan tasks for today ⚠️ [limited](#known-limitations) |
 | `bulk_complete_tasks` | Mark multiple tasks complete in one operation |
 | `bulk_update_tasks` | Update multiple tasks in one operation |
 | `add_tag_to_task` | Add a tag without replacing other tags |
@@ -100,7 +105,7 @@ Include these in task titles and they are parsed automatically:
 
 | Syntax | Example | Effect |
 |--------|---------|--------|
-| `#tag` | `Buy milk #errands` | Adds the "errands" tag |
+| `#tag` | `Buy milk #shopping` | Adds the "shopping" tag |
 | `+project` | `Fix bug +work` | Assigns to "work" project (prefix match, min 3 chars) |
 | `@due` | `Report @friday` | Sets due date to Friday |
 | `@due time` | `Call @tomorrow 3pm` | Sets due date and time |
@@ -114,6 +119,12 @@ Include these in task titles and they are parsed automatically:
 **Commands timing out?** Ask *"Show debug info for Super Productivity"* to check that both sides are using the same data directory. Mac App Store users may need to set `SP_MCP_DATA_DIR`.
 
 → [Full troubleshooting guide](docs/troubleshooting.md)
+
+## Known Limitations
+
+| Tool | Issue | Status |
+|------|-------|--------|
+| `plan_tasks_for_today` | Sets `plannedAt` on the task but does not add it to SP's internal Planner store, so the task may not appear in the Today view. | Upstream request: [super-productivity#7495](https://github.com/super-productivity/super-productivity/issues/7495) |
 
 ## License
 
