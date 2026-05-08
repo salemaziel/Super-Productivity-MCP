@@ -79,14 +79,15 @@ async function setupDirectories() {
 }
 
 async function writeResponse(commandId, response) {
+  const payload = JSON.stringify(response, null, 2);
   await PluginAPI.executeNodeScript({
     script: `
       const fs = require('fs');
       const path = require('path');
-      fs.writeFileSync(path.join(args[0], args[1] + '_response.json'), JSON.stringify(args[2], null, 2), { mode: 0o600 });
+      fs.writeFileSync(path.join(args[0], args[1] + '_response.json'), args[2], { mode: 0o600 });
       return { success: true };
     `,
-    args: [responseDir, commandId, response],
+    args: [responseDir, commandId, payload],
     timeout: 5000,
   });
 }
@@ -439,11 +440,12 @@ async function pollCommands() {
     for (const cmd of r.commands) {
       try {
         const response = await executeCommand(cmd.data);
-        await writeResponse(cmd.data.id || cmd.file.replace('.json', ''), response);
+        const cmdId = cmd.data.id || cmd.file.replace('.json', '');
+        await writeResponse(cmdId, response);
         await deleteFile(cmd.path);
         lastProcessed = Math.max(lastProcessed, cmd.mtime);
       } catch (e) {
-        console.error('Command failed:', e);
+        console.error('Command processing failed (' + (cmd.data && cmd.data.action) + '):', e);
       }
     }
   } catch (e) {
