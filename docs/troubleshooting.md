@@ -54,7 +54,14 @@ Common values:
 | macOS App Store sandbox | `~/Library/Containers/com.superproductivity.app/Data/Library/Application Support/super-productivity-mcp` |
 | Linux (standard) | `~/.local/share/super-productivity-mcp` |
 | Linux (Snap) | `~/snap/superproductivity/current/.local/share/super-productivity-mcp` |
+| Linux (sandboxed/Flatpak) | `/tmp/super-productivity-mcp` |
 | Windows | `%APPDATA%\super-productivity-mcp` |
+
+> **Note:** On Linux, if `~/.local/share` is not writable (e.g. Fedora with restrictive permissions or Flatpak sandboxing), the plugin and server will automatically fall back to `/tmp/super-productivity-mcp`. This directory may be cleared on reboot but works without any configuration.
+
+## `ReferenceError: process is not defined`
+
+This occurs on plugin versions ≤ 1.1.1 when SP's plugin sandbox doesn't expose the Node.js `process` global. Update to version 1.2.0+ which guards against this. If you installed the plugin manually, re-download `plugin.zip` from the [latest release](https://github.com/b0x42/Super-Productivity-MCP/releases/latest).
 
 ## Version Mismatch
 
