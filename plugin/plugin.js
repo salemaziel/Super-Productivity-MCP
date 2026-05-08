@@ -22,11 +22,13 @@ async function setupDirectories() {
           path.join(home, 'Library', 'Application Support', APP)
         ];
       } else if (os.platform() === 'win32') {
-        candidates = [path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), APP)];
+        const appData = (typeof process !== 'undefined' && process.env && process.env.APPDATA) || path.join(home, 'AppData', 'Roaming');
+        candidates = [path.join(appData, APP)];
       } else {
+        const xdgData = (typeof process !== 'undefined' && process.env && process.env.XDG_DATA_HOME) || path.join(home, '.local', 'share');
         candidates = [
           path.join(home, 'snap', 'superproductivity', 'current', '.local', 'share', APP),
-          path.join(process.env.XDG_DATA_HOME || path.join(home, '.local', 'share'), APP)
+          path.join(xdgData, APP)
         ];
       }
       // Check for mcp_config.json override
