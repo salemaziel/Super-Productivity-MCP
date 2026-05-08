@@ -28,9 +28,11 @@ async function setupDirectories() {
         const xdgData = (typeof process !== 'undefined' && process.env && process.env.XDG_DATA_HOME) || path.join(home, '.local', 'share');
         candidates = [
           path.join(home, 'snap', 'superproductivity', 'current', '.local', 'share', APP),
-          path.join(xdgData, APP)
+          path.join(xdgData, APP),
+          path.join('/tmp', APP)
         ];
       }
+      const errors = [];
       // Check for mcp_config.json override
       for (const p of candidates) {
         try {
@@ -56,9 +58,11 @@ async function setupDirectories() {
           if (!fs.existsSync(cd)) fs.mkdirSync(cd, { recursive: true, mode: 0o700 });
           if (!fs.existsSync(rd)) fs.mkdirSync(rd, { recursive: true, mode: 0o700 });
           return { success: true, commandDir: cd, responseDir: rd };
-        } catch (e) {}
+        } catch (e) {
+          errors.push(p + ': ' + (e.message || e));
+        }
       }
-      return { success: false, error: 'No writable directory found' };
+      return { success: false, error: 'No writable directory found. Tried:\\n' + errors.join('\\n') };
     `,
     args: [],
     timeout: 10000,

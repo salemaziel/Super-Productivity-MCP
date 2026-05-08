@@ -19,6 +19,7 @@ function getCandidatePaths(): string[] {
       return [
         join(home, 'snap', 'superproductivity', 'current', '.local', 'share', APP_NAME),
         join(process.env.XDG_DATA_HOME ?? join(home, '.local', 'share'), APP_NAME),
+        join('/tmp', APP_NAME),
       ];
   }
 }
