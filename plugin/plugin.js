@@ -79,17 +79,25 @@ async function setupDirectories() {
 }
 
 async function writeResponse(commandId, response) {
-  const payload = JSON.stringify(response, null, 2);
-  await PluginAPI.executeNodeScript({
-    script: `
-      const fs = require('fs');
-      const path = require('path');
-      fs.writeFileSync(path.join(args[0], args[1] + '_response.json'), args[2], { mode: 0o600 });
-      return { success: true };
-    `,
-    args: [responseDir, commandId, payload],
-    timeout: 5000,
-  });
+  const payload = JSON.stringify(response, null, 2) ?? 'null';
+  const filePath = responseDir + '/' + commandId + '_response.json';
+  // SP's executeNodeScript sandbox silently drops args[2]+, so passing the payload
+  // via args causes writeFileSync to receive undefined and throw — swallowed silently.
+  // Instead, embed the payload directly in the script string in 32KB chunks.
+  const CHUNK = 32 * 1024;
+  for (let i = 0; i < payload.length; i += CHUNK) {
+    const chunk = JSON.stringify(payload.slice(i, i + CHUNK));
+    const mode = i === 0 ? 'writeFileSync' : 'appendFileSync';
+    const result = await PluginAPI.executeNodeScript({
+      script: `const fs=require('fs'); fs.${mode}(args[0], ${chunk}); return {success:true};`,
+      args: [filePath],
+      timeout: 5000,
+    });
+    const r = (result && result.result && typeof result.result === 'object') ? result.result : result;
+    if (!r || r.success === false) {
+      throw new Error('writeResponse failed: ' + (r && r.error ? r.error : JSON.stringify(r)));
+    }
+  }
 }
 
 async function deleteFile(filePath) {
@@ -438,14 +446,21 @@ async function pollCommands() {
     const r = result && result.success && result.result && typeof result.result === 'object' ? result.result : result;
     if (!r || !r.success || !r.commands) return;
     for (const cmd of r.commands) {
+      const cmdId = cmd.data.id || cmd.file.replace('.json', '');
       try {
         const response = await executeCommand(cmd.data);
-        const cmdId = cmd.data.id || cmd.file.replace('.json', '');
         await writeResponse(cmdId, response);
+      } catch (e) {
+        console.error('Command processing failed (' + (cmd.data && cmd.data.action) + '):', e);
+        try {
+          await writeResponse(cmdId, { success: false, error: e.message || String(e), timestamp: Date.now() });
+        } catch (_) {}
+      }
+      try {
         await deleteFile(cmd.path);
         lastProcessed = Math.max(lastProcessed, cmd.mtime);
       } catch (e) {
-        console.error('Command processing failed (' + (cmd.data && cmd.data.action) + '):', e);
+        console.error('deleteFile failed:', e);
       }
     }
   } catch (e) {
