@@ -79,7 +79,7 @@ async function setupDirectories() {
 }
 
 async function writeResponse(commandId, response) {
-  const payload = JSON.stringify(response, null, 2) ?? 'null';
+  const payload = JSON.stringify(response, null, 2) || 'null';
   const filePath = responseDir + '/' + commandId + '_response.json';
   // SP's executeNodeScript sandbox silently drops args[2]+, so passing the payload
   // via args causes writeFileSync to receive undefined and throw — swallowed silently.
@@ -91,11 +91,11 @@ async function writeResponse(commandId, response) {
     const result = await PluginAPI.executeNodeScript({
       script: `const fs=require('fs'); fs.${mode}(args[0], ${chunk}); return {success:true};`,
       args: [filePath],
-      timeout: 5000,
+      timeout: 10000,
     });
     const r = (result && result.result && typeof result.result === 'object') ? result.result : result;
     if (!r || r.success === false) {
-      throw new Error('writeResponse failed: ' + (r && r.error ? r.error : JSON.stringify(r)));
+      throw new Error('writeResponse failed: ' + (r && r.error ? r.error : String(r)));
     }
   }
 }
@@ -456,9 +456,9 @@ async function pollCommands() {
           await writeResponse(cmdId, { success: false, error: e.message || String(e), timestamp: Date.now() });
         } catch (_) {}
       }
+      lastProcessed = Math.max(lastProcessed, cmd.mtime);
       try {
         await deleteFile(cmd.path);
-        lastProcessed = Math.max(lastProcessed, cmd.mtime);
       } catch (e) {
         console.error('deleteFile failed:', e);
       }
