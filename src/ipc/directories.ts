@@ -5,7 +5,7 @@ import type { McpConfig } from './types.js';
 
 const APP_NAME = 'super-productivity-mcp';
 
-function getCandidatePaths(): string[] {
+export function getCandidatePaths(): string[] {
   const home = homedir();
   switch (platform()) {
     case 'darwin':
@@ -19,7 +19,7 @@ function getCandidatePaths(): string[] {
       return [
         join(home, 'snap', 'superproductivity', 'current', '.local', 'share', APP_NAME),
         join(process.env.XDG_DATA_HOME ?? join(home, '.local', 'share'), APP_NAME),
-        join('/tmp', APP_NAME),
+        join('/tmp', APP_NAME), // last-resort: world-writable dir, but mode 0o700 restricts access
       ];
   }
 }

@@ -29,7 +29,7 @@ async function setupDirectories() {
         candidates = [
           path.join(home, 'snap', 'superproductivity', 'current', '.local', 'share', APP),
           path.join(xdgData, APP),
-          path.join('/tmp', APP)
+          path.join('/tmp', APP) // last-resort: world-writable dir, but mode 0o700 restricts access
         ];
       }
       const errors = [];

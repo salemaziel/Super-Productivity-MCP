@@ -57,7 +57,7 @@ Common values:
 | Linux (sandboxed/Flatpak) | `/tmp/super-productivity-mcp` |
 | Windows | `%APPDATA%\super-productivity-mcp` |
 
-> **Note:** On Linux, if `~/.local/share` is not writable (e.g. Fedora with restrictive permissions or Flatpak sandboxing), the plugin and server will automatically fall back to `/tmp/super-productivity-mcp`. This directory is cleared on reboot but works without any configuration.
+> **Note:** On Linux, if `~/.local/share` is not writable (e.g. Fedora with restrictive permissions or Flatpak sandboxing), the plugin and server will automatically fall back to `/tmp/super-productivity-mcp`. This directory may be cleared on reboot but works without any configuration.
 
 ## `ReferenceError: process is not defined`
 
