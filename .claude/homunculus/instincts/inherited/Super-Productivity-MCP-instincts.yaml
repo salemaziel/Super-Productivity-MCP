@@ -1,0 +1,363 @@
+# Instincts generated from https://github.com/salemaziel/Super-Productivity-MCP
+# Generated: 2026-05-16T10:26:25.291Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: Super-Productivity-MCP-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity MCP Commit Length
+
+## Action
+
+Write moderate-length commit messages (~82 characters)
+
+## Evidence
+
+- Average commit message length: 82 chars
+- Based on 2 commits
+
+---
+id: Super-Productivity-MCP-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity MCP Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: Super-Productivity-MCP-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity MCP Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: Super-Productivity-MCP-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity MCP Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: Super-Productivity-MCP-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity MCP Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: Super-Productivity-MCP-workflow-security-hardening-and-validation
+trigger: "when doing security hardening and validation"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity MCP Workflow Security Hardening And Validation
+
+## Action
+
+Follow the security-hardening-and-validation workflow:
+1. Modify src/ipc/directories.ts to add or improve security checks (e.g., permissions, symlink rejection, path validation).
+2. Update or create validation tests in tests/unit/directories.test.ts to cover new security logic.
+3. Optionally update plugin/plugin.js if plugin-level changes are needed.
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/ipc/directories.ts, tests/unit/directories.test.ts, plugin/plugin.js
+
+---
+id: super-productivity-mcp-instinct-file-naming
+trigger: "When creating a new file in the codebase"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct File Naming
+
+## Action
+
+Name the file using camelCase convention
+
+## Evidence
+
+- Pattern in namingConventions.files
+- Observed in src/ipc/directories.ts
+
+---
+id: super-productivity-mcp-instinct-function-naming
+trigger: "When defining a new function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Function Naming
+
+## Action
+
+Name the function using camelCase convention
+
+## Evidence
+
+- Pattern in namingConventions.functions
+
+---
+id: super-productivity-mcp-instinct-class-naming
+trigger: "When defining a new class"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Class Naming
+
+## Action
+
+Name the class using PascalCase convention
+
+## Evidence
+
+- Pattern in namingConventions.classes
+
+---
+id: super-productivity-mcp-instinct-constant-naming
+trigger: "When defining a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Constant Naming
+
+## Action
+
+Name the constant using SCREAMING_SNAKE_CASE convention
+
+## Evidence
+
+- Pattern in namingConventions.constants
+
+---
+id: super-productivity-mcp-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Import Style
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern in importStyle: relative
+
+---
+id: super-productivity-mcp-instinct-export-style
+trigger: "When exporting modules or functions"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Export Style
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern in exportStyle: named
+
+---
+id: super-productivity-mcp-instinct-try-catch-errors
+trigger: "When handling errors in code"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Try Catch Errors
+
+## Action
+
+Use try-catch blocks for error handling
+
+## Evidence
+
+- Pattern in errorHandling.style: try-catch
+
+---
+id: super-productivity-mcp-instinct-test-location
+trigger: "When adding or updating tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Test Location
+
+## Action
+
+Place tests in the separate 'tests' folder, mirroring the structure of the source files
+
+## Evidence
+
+- Pattern in architecture.testLocation: separate
+- Example: tests/unit/directories.test.ts
+
+---
+id: super-productivity-mcp-instinct-test-update-on-security
+trigger: "When modifying security logic in src/ipc/directories.ts"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Test Update On Security
+
+## Action
+
+Update or create corresponding validation tests in tests/unit/directories.test.ts
+
+## Evidence
+
+- Workflow: security-hardening-and-validation
+- Commits updating both src/ipc/directories.ts and tests/unit/directories.test.ts
+
+---
+id: super-productivity-mcp-instinct-git-commit-prefix-security
+trigger: "When committing security-related changes"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Git Commit Prefix Security
+
+## Action
+
+Prefix the commit message with 'security:'
+
+## Evidence
+
+- Commits: 'security: harden IPC directory permissions...'
+- Pattern in commits.prefixes: security
+
+---
+id: super-productivity-mcp-instinct-git-commit-length
+trigger: "When writing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Git Commit Length
+
+## Action
+
+Write a descriptive commit message averaging around 80 characters
+
+## Evidence
+
+- Pattern in commits.averageLength: 82
+
+---
+id: super-productivity-mcp-instinct-security-hardening-workflow
+trigger: "When someone wants to enhance security around IPC directory access or file operations"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: salemaziel/Super-Productivity-MCP
+---
+
+# Super Productivity Mcp Instinct Security Hardening Workflow
+
+## Action
+
+Modify src/ipc/directories.ts to add or improve security checks, update or create validation tests in tests/unit/directories.test.ts, and optionally update plugin/plugin.js
+
+## Evidence
+
+- Workflow: security-hardening-and-validation
+- Commits modifying src/ipc/directories.ts and tests/unit/directories.test.ts
+
