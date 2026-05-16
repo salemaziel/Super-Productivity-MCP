@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, chmodSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs';
-import { join, resolve, isAbsolute } from 'node:path';
+import { existsSync, mkdirSync, chmodSync, lstatSync, writeFileSync, readFileSync, unlinkSync } from 'node:fs';
+import { join, resolve, isAbsolute, sep } from 'node:path';
 import { homedir, platform } from 'node:os';
 import type { McpConfig } from './types.js';
 
@@ -32,6 +32,13 @@ function ensureDir(dir: string): void {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
+  const stat = lstatSync(dir);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`IPC directory path must not be a symbolic link: ${dir}`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`IPC directory path exists but is not a directory: ${dir}`);
+  }
   chmodSync(dir, 0o700);
 }
 
@@ -56,7 +63,7 @@ export function resolveDataDir(): string {
   const envOverride = process.env.SP_MCP_DATA_DIR;
   if (envOverride) {
     const resolved = resolve(envOverride);
-    if (!isAbsolute(envOverride) || envOverride.includes('..')) {
+    if (!isAbsolute(envOverride) || envOverride.split(sep).includes('..')) {
       throw new Error(`SP_MCP_DATA_DIR must be an absolute path without traversal: ${envOverride}`);
     }
     ensureIpcDirs(resolved);

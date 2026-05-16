@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, tmpdir, platform } from 'node:os';
 
@@ -59,5 +59,38 @@ describe('directories', () => {
       'super-productivity-mcp',
     ));
     expect(paths.indexOf('/tmp/super-productivity-mcp')).toBeGreaterThan(0);
+  });
+
+  describe('SP_MCP_DATA_DIR validation', () => {
+    it('rejects a relative path', async () => {
+      process.env.SP_MCP_DATA_DIR = 'relative/path';
+      const { resolveDataDir } = await import('../../src/ipc/directories.js');
+      expect(() => resolveDataDir()).toThrow(/must be an absolute path without traversal/);
+    });
+
+    it('rejects a path with a .. segment', async () => {
+      process.env.SP_MCP_DATA_DIR = '/some/valid/../path';
+      const { resolveDataDir } = await import('../../src/ipc/directories.js');
+      expect(() => resolveDataDir()).toThrow(/must be an absolute path without traversal/);
+    });
+
+    it('accepts a valid absolute path that contains dots in a segment name', async () => {
+      const customDir = join(testDir, 'data..backup');
+      process.env.SP_MCP_DATA_DIR = customDir;
+      const { resolveDataDir } = await import('../../src/ipc/directories.js');
+      const result = resolveDataDir();
+      expect(result).toBe(customDir);
+    });
+
+    it('rejects a symlinked IPC directory', async () => {
+      if (platform() === 'win32') return;
+      const realDir = join(testDir, 'real');
+      const linkDir = join(testDir, 'link');
+      mkdirSync(realDir, { recursive: true });
+      symlinkSync(realDir, linkDir);
+      process.env.SP_MCP_DATA_DIR = linkDir;
+      const { resolveDataDir } = await import('../../src/ipc/directories.js');
+      expect(() => resolveDataDir()).toThrow(/symbolic link/);
+    });
   });
 });
