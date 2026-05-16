@@ -1,0 +1,6 @@
+interface:
+  display_name: "Super Productivity MCP"
+  short_description: "Repo-specific patterns and workflows for Super-Productivity-MCP"
+  default_prompt: "Use the Super-Productivity-MCP repo skill to follow existing architecture, testing, and workflow conventions."
+policy:
+  allow_implicit_invocation: true
