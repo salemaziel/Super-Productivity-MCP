@@ -495,6 +495,10 @@ async function pollCommands() {
     if (!r || !r.success || !r.commands) return;
     for (const cmd of r.commands) {
       const cmdId = cmd.data.id || cmd.file.replace('.json', '');
+      if (!/^[\w\-]+$/.test(cmdId)) {
+        console.error('Rejected command with unsafe id:', cmdId);
+        continue;
+      }
       try {
         const response = await executeCommand(cmd.data);
         await writeResponse(cmdId, response);
