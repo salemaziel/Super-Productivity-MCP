@@ -114,7 +114,7 @@ Include these in task titles and they are parsed automatically:
 
 ## Troubleshooting
 
-**Plugin not responding after install?** Toggle the plugin off and on in Settings → Plugins — this is a [known SP startup issue](https://github.com/super-productivity/super-productivity/issues/7326).
+**Plugin not loading?** Update to SP ≥ 18.6.0 — older versions have a cold-boot race that can prevent the plugin from initializing. On SP ≥ 18.6.0 this is fixed and no restart is needed; just **toggle the plugin off and on** in Settings → Plugins. On older versions, a restart after toggling may help.
 
 **Commands timing out?** Ask *"Show debug info for Super Productivity"* to check that both sides are using the same data directory. Mac App Store users may need to set `SP_MCP_DATA_DIR`.
 
