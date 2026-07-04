@@ -41,6 +41,8 @@ Download `plugin.zip` from the [latest release](https://github.com/b0x42/Super-P
 
 Then in Super Productivity: **Settings → Plugins → Upload Plugin**, select `plugin.zip`, restart SP.
 
+> **SP ≥ 18.13.0:** After enabling the plugin, SP shows a one-time **Node execution consent dialog**. Click **Allow** — the plugin requires Node access to communicate with the MCP server. Consent persists per device; only re-asked if you re-upload the plugin.
+
 ### 2. Configure Your MCP Client
 
 ```json
@@ -173,7 +175,9 @@ Include these in task titles and they are parsed automatically:
 
 ## Troubleshooting
 
-**Plugin not loading?** Update to SP ≥ 18.6.0 — older versions have a cold-boot race that can prevent the plugin from initializing. On SP ≥ 18.6.0 this is fixed and no restart is needed; just **toggle the plugin off and on** in Settings → Plugins. On older versions, a restart after toggling may help.
+**Plugin not loading?** Two common causes:
+- **SP 18.6.0–18.9.x cold-boot race:** toggle the plugin off and on in Settings → Plugins (no restart needed on ≥ 18.6.0).
+- **SP 18.10.0–18.12.x hard block:** update to SP ≥ 18.13.0. After re-uploading the plugin, accept the Node execution consent dialog that appears on first enable.
 
 **Commands timing out?** Ask *"Show debug info for Super Productivity"* to check that both sides are using the same data directory. Mac App Store users may need to set `SP_MCP_DATA_DIR`.
 
