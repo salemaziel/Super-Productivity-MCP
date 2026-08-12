@@ -1,17 +1,50 @@
 import { describe, it, expect } from 'vitest';
-import { parseAtDateSyntax } from '../../../plugin/plugin.js';
+import { parseAtDateSyntax, stripResidualDateTokens } from '../../../plugin/plugin.js';
 
 // Fixed reference date: Wednesday 2026-07-15
 const NOW = new Date(2026, 6, 15, 10, 0, 0);
 
+describe('stripResidualDateTokens', () => {
+  // Regression: SP 18.16+ short-syntax parsing (chrono) consumes date-like @tokens from the
+  // titles of plugin-created tasks (the plugin bridge can't disable it), so the plugin must
+  // neutralize them deterministically to avoid mangling + dueDay clobbering.
+  it('strips a residual literal @date token', () => {
+    expect(stripResidualDateTokens('[test] @date regression live')).toBe('[test] regression live');
+  });
+
+  it('strips weekday/month/relative date-like tokens', () => {
+    expect(stripResidualDateTokens('a @monday b @friday c')).toBe('a b c');
+    expect(stripResidualDateTokens('x @jan y @dec z')).toBe('x y z');
+    expect(stripResidualDateTokens('x @may y')).toBe('x y');
+    expect(stripResidualDateTokens('x @tomorrow y @today')).toBe('x y');
+    expect(stripResidualDateTokens('x @noon y @midnight')).toBe('x y');
+  });
+
+  it('preserves non-date @tokens', () => {
+    expect(stripResidualDateTokens('email @dave about @tag')).toBe('email @dave about @tag');
+    expect(stripResidualDateTokens('@home @work')).toBe('@home @work');
+  });
+
+  it('leaves plain titles and nulls untouched', () => {
+    expect(stripResidualDateTokens('buy milk')).toBe('buy milk');
+    expect(stripResidualDateTokens(null)).toBeNull();
+    expect(stripResidualDateTokens('')).toBe('');
+  });
+
+  it('collapses whitespace after stripping mid-title tokens', () => {
+    expect(stripResidualDateTokens('buy @date milk')).toBe('buy milk');
+  });
+});
+
 describe('parseAtDateSyntax', () => {
   it('leaves title untouched when there is no @date syntax', () => {
-    expect(parseAtDateSyntax('buy milk', NOW)).toEqual({ dueDay: null, cleanTitle: 'buy milk' });
+    expect(parseAtDateSyntax('buy milk', NOW)).toEqual({ dueDay: null, dueWithTime: null, cleanTitle: 'buy milk' });
   });
 
   it('resolves @today and strips the token', () => {
     expect(parseAtDateSyntax('buy milk @today', NOW)).toEqual({
       dueDay: '2026-07-15',
+      dueWithTime: null,
       cleanTitle: 'buy milk',
     });
   });
@@ -32,6 +65,7 @@ describe('parseAtDateSyntax', () => {
   it('strips a trailing am/pm time token from the title', () => {
     expect(parseAtDateSyntax('call mom @today 6pm', NOW)).toEqual({
       dueDay: '2026-07-15',
+      dueWithTime: new Date(2026, 6, 15, 18, 0, 0).getTime(),
       cleanTitle: 'call mom',
     });
   });
@@ -40,12 +74,34 @@ describe('parseAtDateSyntax', () => {
     expect(parseAtDateSyntax('call mom @today 14:30', NOW).cleanTitle).toBe('call mom');
   });
 
-  // Regression: https://github.com/b0x42/Super-Productivity-MCP/issues/78
-  // "@today 6h/11h" previously ate the leading digit of the duration syntax,
-  // corrupting the title to "test task2 h/11h".
+  it('sets dueWithTime for HH:MM 24h tokens', () => {
+    expect(parseAtDateSyntax('call mom @today 14:30', NOW).dueWithTime).toBe(new Date(2026, 6, 15, 14, 30, 0).getTime());
+  });
+
+  it('sets dueWithTime on the due date for @tomorrow 3pm', () => {
+    expect(parseAtDateSyntax('call @tomorrow 3pm', NOW)).toEqual({
+      dueDay: '2026-07-16',
+      dueWithTime: new Date(2026, 6, 16, 15, 0, 0).getTime(),
+      cleanTitle: 'call',
+    });
+  });
+
+  it('handles 12am -> 00:00 and 12pm -> 12:00', () => {
+    expect(parseAtDateSyntax('a @today 12am', NOW).dueWithTime).toBe(new Date(2026, 6, 15, 0, 0, 0).getTime());
+    expect(parseAtDateSyntax('b @today 12pm', NOW).dueWithTime).toBe(new Date(2026, 6, 15, 12, 0, 0).getTime());
+  });
+
+  it('handles HH:MM am/pm tokens', () => {
+    expect(parseAtDateSyntax('c @today 9:30am', NOW).dueWithTime).toBe(new Date(2026, 6, 15, 9, 30, 0).getTime());
+    expect(parseAtDateSyntax('d @today 9:30pm', NOW).dueWithTime).toBe(new Date(2026, 6, 15, 21, 30, 0).getTime());
+  });
+
+  // Regression (#78): "@today 6h/11h" previously ate the leading digit of the
+  // duration syntax, corrupting the title to "test task2 h/11h".
   it('does not eat a leading digit from adjacent duration syntax (#78)', () => {
     expect(parseAtDateSyntax('test task2 @today 6h/11h', NOW)).toEqual({
       dueDay: '2026-07-15',
+      dueWithTime: null,
       cleanTitle: 'test task2 6h/11h',
     });
   });
@@ -54,6 +110,7 @@ describe('parseAtDateSyntax', () => {
     expect(parseAtDateSyntax('test task2 @today 14h duration', NOW).cleanTitle).toBe(
       'test task2 14h duration',
     );
+    expect(parseAtDateSyntax('test task2 @today 14h duration', NOW).dueWithTime).toBeNull();
   });
 
   it('still strips the time token when followed directly by punctuation', () => {
@@ -64,5 +121,47 @@ describe('parseAtDateSyntax', () => {
 
   it('collapses the double space left after stripping a mid-title @date token', () => {
     expect(parseAtDateSyntax('buy @today milk', NOW).cleanTitle).toBe('buy milk');
+  });
+
+  // Regression: BR-2026-08-05-01 — a non-date @word earlier in the title used to shadow
+  // the real @date token because the parser only looked at the first @token.
+  it('skips a non-date @word that precedes @date syntax', () => {
+    expect(parseAtDateSyntax('[test] @date syntax check @tomorrow 3pm', NOW)).toEqual({
+      dueDay: '2026-07-16',
+      dueWithTime: new Date(2026, 6, 16, 15, 0, 0).getTime(),
+      cleanTitle: '[test] @date syntax check',
+    });
+  });
+
+  it('skips a non-date @word before bare @date syntax', () => {
+    expect(parseAtDateSyntax('[test] @date bare syntax @tomorrow', NOW)).toEqual({
+      dueDay: '2026-07-16',
+      dueWithTime: null,
+      cleanTitle: '[test] @date bare syntax',
+    });
+  });
+
+  it('skips @handle tokens that are not date keywords', () => {
+    expect(parseAtDateSyntax('email @dave about @monday', NOW)).toEqual({
+      dueDay: '2026-07-20',
+      dueWithTime: null,
+      cleanTitle: 'email @dave about',
+    });
+  });
+
+  it('uses the first resolvable date when several @tokens are present', () => {
+    expect(parseAtDateSyntax('@today then @tomorrow', NOW)).toEqual({
+      dueDay: '2026-07-15',
+      dueWithTime: null,
+      cleanTitle: 'then @tomorrow',
+    });
+  });
+
+  it('leaves the title untouched when only non-date @words are present', () => {
+    expect(parseAtDateSyntax('note @date is not a date @foo 6pm', NOW)).toEqual({
+      dueDay: null,
+      dueWithTime: null,
+      cleanTitle: 'note @date is not a date @foo 6pm',
+    });
   });
 });

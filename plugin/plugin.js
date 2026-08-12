@@ -1,11 +1,32 @@
 // MCP Bridge Plugin for Super Productivity
+// Keep PLUGIN_VERSION in sync with manifest.json "version".
+const PLUGIN_VERSION = '1.8.5';
 const PROTOCOL_VERSION = 1;
+// This plugin is built for SP 18.16.0 only; older builds are refused with a clear error
+// instead of silently degrading (no marker-only timer fallback, no legacy plannedAt paths).
+const MIN_SUP_VERSION = '18.16.0';
 const POLL_INTERVAL_MS = 2000;
 let commandDir = null;
 let responseDir = null;
 let pollTimer = null;
 let lastProcessed = 0;
 let currentTrackedTask = null;
+
+function isAtLeast(installed, min) {
+  const a = String(installed || '').split('.');
+  const b = min.split('.');
+  for (let i = 0; i < 3; i++) {
+    const ai = parseInt(a[i], 10) || 0;
+    const bi = parseInt(b[i], 10) || 0;
+    if (ai > bi) return true;
+    if (ai < bi) return false;
+  }
+  return true;
+}
+
+function getAppVersion() {
+  return (typeof PluginAPI.cfg !== 'undefined' && PluginAPI.cfg && PluginAPI.cfg.appVersion) || null;
+}
 
 function unwrapNodeResult(result) {
   return result && result.success && result.result && typeof result.result === 'object' ? result.result : result;
@@ -20,46 +41,221 @@ function assertNodeResult(result, context) {
 }
 
 // Parse @date short syntax (e.g. "@today 6pm", "@monday", "@3days") out of a task title
-// since PluginAPI.addTask doesn't process it. Returns the computed dueDay (or null) and the
+// since PluginAPI.addTask doesn't process it. Returns the computed dueDay (or null), a
+// dueWithTime (unix ms of the due date at the given local time, only when a time token is
+// present — plain "@friday" sets the due date but leaves the planned time untouched), and the
 // title with the @syntax stripped. The trailing time token (HH, HH:MM, with optional am/pm) is
 // only consumed when not immediately followed by a letter/digit, so duration syntax like
 // "6h/11h" or "14h" isn't mistaken for a bare hour and partially eaten.
+//
+// Only the FIRST @token whose keyword resolves to a valid date is applied; any earlier
+// @word that isn't a date (e.g. a literal "@date" or a handle like "@dave") is skipped,
+// so it can't shadow a real date later in the title.
 function parseAtDateSyntax(title, now = new Date()) {
-  const dateMatch = title.match(/@(\S+)(?:\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)(?![a-zA-Z0-9]))?/i);
-  let dueDay = null;
   const localDateStr = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-  if (dateMatch) {
-    const keyword = dateMatch[1].toLowerCase();
+  const parseTime = (token) => {
+    // "3pm" -> 15:00, "12am" -> 00:00, "12pm" -> 12:00, "6" -> 06:00, "09:30" -> 09:30
+    const m = token.trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
+    if (!m) return null;
+    let hour = parseInt(m[1], 10);
+    const minute = m[2] ? parseInt(m[2], 10) : 0;
+    const meridiem = m[3];
+    if (meridiem === 'pm' && hour < 12) hour += 12;
+    if (meridiem === 'am' && hour === 12) hour = 0;
+    if (hour > 23 || minute > 59) return null;
+    return { hour, minute };
+  };
+  const resolveDay = (keyword) => {
+    const kw = keyword.toLowerCase();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (keyword === 'today' || keyword === '0days') {
-      dueDay = localDateStr(today);
-    } else if (keyword === 'tomorrow' || keyword === '1days') {
+    if (kw === 'today' || kw === '0days') {
+      return localDateStr(today);
+    }
+    if (kw === 'tomorrow' || kw === '1days') {
       today.setDate(today.getDate() + 1);
-      dueDay = localDateStr(today);
-    } else if (/^\d+days?$/.test(keyword)) {
-      const days = parseInt(keyword);
-      today.setDate(today.getDate() + days);
-      dueDay = localDateStr(today);
-    } else {
-      const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-      const idx = dayNames.indexOf(keyword);
-      if (idx !== -1) {
-        const diff = (idx - now.getDay() + 7) % 7 || 7;
-        today.setDate(today.getDate() + diff);
-        dueDay = localDateStr(today);
+      return localDateStr(today);
+    }
+    if (/^\d+days?$/.test(kw)) {
+      today.setDate(today.getDate() + parseInt(kw, 10));
+      return localDateStr(today);
+    }
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const idx = dayNames.indexOf(kw);
+    if (idx !== -1) {
+      const diff = (idx - now.getDay() + 7) % 7 || 7;
+      today.setDate(today.getDate() + diff);
+      return localDateStr(today);
+    }
+    return null;
+  };
+
+  let dueDay = null;
+  let dueWithTime = null;
+  let matchStart = -1;
+  let matchEnd = -1;
+  const tokenRe = /@(\S+)(?:\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)(?![a-zA-Z0-9]))?/gi;
+  let m;
+  while ((m = tokenRe.exec(title)) !== null) {
+    matchStart = m.index;
+    matchEnd = tokenRe.lastIndex;
+    const day = resolveDay(m[1]);
+    if (!day) continue;
+    dueDay = day;
+    if (m[2]) {
+      const t = parseTime(m[2]);
+      if (t) {
+        const [y, mo, d] = dueDay.split('-').map(Number);
+        dueWithTime = new Date(y, mo - 1, d, t.hour, t.minute).getTime();
       }
     }
+    break;
   }
 
   const cleanTitle = dueDay
-    ? title.replace(/@\S+(\s+\d{1,2}(:\d{2})?\s*(am|pm)?(?![a-zA-Z0-9]))?/i, ' ').replace(/\s+/g, ' ').trim()
+    ? (title.slice(0, matchStart) + ' ' + title.slice(matchEnd)).replace(/\s+/g, ' ').trim()
     : title;
 
-  return { dueDay, cleanTitle };
+  return { dueDay, dueWithTime, cleanTitle };
+}
+
+// SP 18.16 runs its own short-syntax parser (chrono, see ShortSyntaxEffects) on the titles of
+// plugin-created/updated tasks — the plugin bridge cannot disable it (PluginCreateTaskData has
+// no isIgnoreShortSyntax, and typia.assert rejects unknown fields). A leftover date-like @token
+// that parseAtDateSyntax intentionally keeps in cleanTitle (e.g. a literal "@date") would get
+// re-parsed by SP, clobbering our dueDay and mangling the title. Neutralize deterministically
+// before handing the title to SP. Non-date tokens ("@dave", "@tag") are preserved.
+function stripResidualDateTokens(rawTitle) {
+  if (!rawTitle) return rawTitle;
+  const RE = /\s*@(date|today|tomorrow|tonight|now|noon|midnight|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat|sunday|sun|january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sept|sep|october|oct|november|nov|december|dec|morning|afternoon|evening)(?=\s|$)/gi;
+  return rawTitle.replace(RE, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Shared single-task update processing — used by BOTH the updateTask command and each item of
+// bulkUpdateTasks (raw passthrough previously skipped this logic for bulk, so bulk could not
+// express time_spent_on_day and mishandled dueDay/dueWithTime interplay). Takes `api` (the
+// PluginAPI-like surface) so it is unit-testable without the SP bridge. Throws on invalid input
+// so callers control their own error shape.
+async function applyTaskUpdate(api, taskId, data) {
+  const updateData = Object.assign({}, data || {});
+  // Title-only updates re-run SP's short-syntax parser (SP 18.16+), so scrub residual
+  // date-like @tokens the same way as on create.
+  if (updateData.title) updateData.title = stripResidualDateTokens(updateData.title);
+  // time_spent_on_day: merge a { 'YYYY-MM-DD': ms } map into the existing per-day bucket
+  // (corrections; dates not listed are untouched). timeSpent is recomputed as the bucket
+  // sum unless the caller explicitly set it, mirroring addTimeToday's accounting invariant
+  // (the worklog sums timeSpentOnDay, so writing timeSpent alone would drift the totals).
+  if ('time_spent_on_day' in updateData) {
+    const allTasksForBucket = await api.getTasks();
+    const taskForBucket = allTasksForBucket.find((t) => t.id === taskId);
+    if (!taskForBucket) throw new Error(`Task not found: ${taskId}`);
+    const merged = mergeTimeSpentOnDay(taskForBucket.timeSpentOnDay, updateData.time_spent_on_day, updateData.timeSpent);
+    if (!merged) throw new Error('Invalid time_spent_on_day: values must be non-negative numbers');
+    delete updateData.time_spent_on_day;
+    delete updateData.timeSpent;
+    Object.assign(updateData, merged);
+  }
+  // SP auto-sets the planned time (dueWithTime) when dueDay changes. Preserve existing
+  // value unless the caller explicitly included dueWithTime in the update.
+  if ('dueDay' in updateData && !('dueWithTime' in updateData)) {
+    const allTasksForUpdate = await api.getTasks();
+    const taskForUpdate = allTasksForUpdate.find((t) => t.id === taskId);
+    const currentPlannedTime = taskForUpdate ? (taskForUpdate.dueWithTime ?? null) : null;
+    return api.updateTask(taskId, Object.assign({}, updateData, { dueWithTime: currentPlannedTime }));
+  }
+  return api.updateTask(taskId, updateData);
+}
+
+
+// Merge a { 'YYYY-MM-DD': ms } patch into a task's per-day bucket. Returns null when the patch
+// is invalid (non-finite or negative ms). The total (timeSpent) is recomputed as the bucket sum
+// unless the caller explicitly overrides it. Keeps the addTimeToday invariant: the worklog sums
+// timeSpentOnDay, so the totals must move with the bucket.
+function mergeTimeSpentOnDay(existing, patch, explicitTotal) {
+  if (patch === null || typeof patch !== 'object') return null;
+  const bucket = Object.assign({}, existing || {});
+  for (const [date, ms] of Object.entries(patch)) {
+    if (typeof ms !== 'number' || !isFinite(ms) || ms < 0) return null;
+    bucket[date] = ms;
+  }
+  return {
+    timeSpentOnDay: bucket,
+    timeSpent: explicitTotal !== undefined ? explicitTotal : Object.values(bucket).reduce((a, b) => a + b, 0),
+  };
+}
+
+
+// Batch temp-id resolution (verified 2026-08-05 on SP 18.16.0 / plugin 1.7.0): the plugin bridge
+// loses same-batch temp_id references — a create with data.parentId = a temp_id from the same
+// batch is silently dropped (createdTaskIds reports an id that never persists), and reorder
+// task_ids containing temp ids silently no-op. SP's own reducer resolves them, so resolve
+// plugin-side instead: creates run first (parents before children, multi-level chains handled),
+// then the remaining ops are rewritten with the real ids from each pass' createdTaskIds.
+function isDeclaredTempId(id, declaredTempIds) {
+  return typeof id === 'string' && declaredTempIds.includes(id);
+}
+
+function rewriteBatchOp(op, tempToReal, declaredTempIds) {
+  const real = (id) => (isDeclaredTempId(id, declaredTempIds) ? tempToReal[id] || id : id);
+  switch (op.type) {
+    case 'create': {
+      const data = { ...op.data };
+      if (data.parentId) data.parentId = real(data.parentId);
+      return { ...op, data };
+    }
+    case 'update': {
+      const updates = { ...op.updates };
+      if (updates.parentId !== undefined) updates.parentId = real(updates.parentId);
+      if (Array.isArray(updates.subTaskIds)) updates.subTaskIds = updates.subTaskIds.map(real);
+      return { type: 'update', taskId: real(op.taskId), updates };
+    }
+    case 'delete':
+      return { type: 'delete', taskId: real(op.taskId) };
+    case 'reorder':
+      return { type: 'reorder', taskIds: op.taskIds.map(real) };
+    default:
+      return op;
+  }
+}
+
+async function runBatchUpdateForProject(api, data) {
+  const ops = Array.isArray(data.operations) ? data.operations : [];
+  const creates = ops.filter((o) => o && o.type === 'create');
+  const rest = ops.filter((o) => o && o.type !== 'create');
+  const declaredTempIds = creates.map((c) => c.tempId);
+  const tempToReal = {};
+  const errors = [];
+  const merged = { success: true, createdTaskIds: tempToReal, errors };
+  let blocked = creates;
+  for (let guard = 0; blocked.length && guard < 20; guard++) {
+    const resolvable = [];
+    const stillBlocked = [];
+    for (const c of blocked) {
+      const pid = c.data && c.data.parentId;
+      if (!pid || !isDeclaredTempId(pid, declaredTempIds) || tempToReal[pid]) resolvable.push(c);
+      else stillBlocked.push(c);
+    }
+    if (!resolvable.length) {
+      for (const c of blocked) errors.push({ op: c.type, tempId: c.tempId, error: `Unresolvable temp parent_id ${c.data && c.data.parentId}` });
+      break;
+    }
+    const res = await api.batchUpdateForProject({ projectId: data.projectId, operations: resolvable.map((o) => rewriteBatchOp(o, tempToReal, declaredTempIds)) });
+    if (res && res.createdTaskIds) Object.assign(tempToReal, res.createdTaskIds);
+    if (res && Array.isArray(res.errors) && res.errors.length) errors.push(...res.errors);
+    if (res && res.success === false) merged.success = false;
+    blocked = stillBlocked;
+  }
+  const finalOps = rest.map((o) => rewriteBatchOp(o, tempToReal, declaredTempIds));
+  if (finalOps.length) {
+    const res = await api.batchUpdateForProject({ projectId: data.projectId, operations: finalOps });
+    if (res && res.createdTaskIds) Object.assign(merged.createdTaskIds, res.createdTaskIds);
+    if (res && Array.isArray(res.errors)) merged.errors.push(...res.errors);
+    if (res && res.success === false) merged.success = false;
+  }
+  return merged;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { parseAtDateSyntax };
+  module.exports = { parseAtDateSyntax, stripResidualDateTokens, mergeTimeSpentOnDay, applyTaskUpdate, runBatchUpdateForProject, rewriteBatchOp, isAtLeast, MIN_SUP_VERSION };
 }
 
 async function setupDirectories() {
@@ -209,6 +405,19 @@ async function executeCommand(command) {
     };
   }
 
+  // Hard version gate: refuse everything except ping (check_connection) on unsupported SP
+  // builds, so agents get a clear error instead of silently degraded behavior.
+  if (command.action !== 'ping') {
+    const appVersion = getAppVersion();
+    if (appVersion && !isAtLeast(appVersion, MIN_SUP_VERSION)) {
+      return {
+        success: false,
+        error: `Super-Productivity-MCP ${PLUGIN_VERSION} requires Super Productivity ${MIN_SUP_VERSION}+ (found ${appVersion}). Older builds are unsupported. Update Super Productivity and re-upload the plugin.`,
+        timestamp: Date.now(),
+      };
+    }
+  }
+
   let result;
   const start = Date.now();
   try {
@@ -219,25 +428,30 @@ async function executeCommand(command) {
 
         // Parse @date syntax since PluginAPI.addTask doesn't process short syntax.
         // Use local date formatting (not toISOString which converts to UTC and shifts the day in positive timezones).
-        const { dueDay, cleanTitle } = parseAtDateSyntax(title);
+        const { dueDay, dueWithTime, cleanTitle } = parseAtDateSyntax(title);
+        // SP 18.16+ short-syntax parsing can't be disabled for plugin tasks, so re-scrub any
+        // residual date-like @token (e.g. a literal "@date") before SP sees the title.
+        const safeTitle = stripResidualDateTokens(cleanTitle);
 
         const hasParent = !!d.parentId;
         const hasSyntax = hasParent && /[#\+]/.test(title);
         if (hasSyntax) {
           const parentClean = title.replace(/\s*[#\+]\S+/g, '').trim() || title;
           const taskId = await PluginAPI.addTask({ ...d, title: parentClean });
-          await PluginAPI.updateTask(taskId, { title });
+          await PluginAPI.updateTask(taskId, { title: stripResidualDateTokens(title) });
           result = taskId;
         } else {
-          result = await PluginAPI.addTask({ ...d, title: cleanTitle });
+          result = await PluginAPI.addTask({ ...d, title: safeTitle });
         }
 
-        // Set dueDay only — plannedAt is independent (due date ≠ planned for today).
+        // Set dueDay only — dueWithTime (planned time) is independent (due date ≠ planned for today).
+        // When a time token was given ("@tomorrow 3pm"), set the exact planned time too.
         // Clear both when no @date syntax so inbox tasks don't inherit stale schedules.
         if (result && dueDay) {
-          await PluginAPI.updateTask(result, { dueDay });
+          const extra = dueWithTime != null ? { dueWithTime } : {};
+          await PluginAPI.updateTask(result, { dueDay, ...extra });
         } else if (result) {
-          await PluginAPI.updateTask(result, { plannedAt: null, dueDay: null });
+          await PluginAPI.updateTask(result, { dueWithTime: null, dueDay: null });
         }
         break;
       }
@@ -253,16 +467,10 @@ async function executeCommand(command) {
         break;
       }
       case 'updateTask': {
-        const updateData = command.data || {};
-        // SP auto-sets plannedAt when dueDay changes. Preserve existing value unless
-        // caller explicitly included plannedAt in the update.
-        if ('dueDay' in updateData && !('plannedAt' in updateData)) {
-          const allTasksForUpdate = await PluginAPI.getTasks();
-          const taskForUpdate = allTasksForUpdate.find(t => t.id === command.taskId);
-          const currentPlannedAt = taskForUpdate ? (taskForUpdate.plannedAt ?? null) : null;
-          result = await PluginAPI.updateTask(command.taskId, { ...updateData, plannedAt: currentPlannedAt });
-        } else {
-          result = await PluginAPI.updateTask(command.taskId, updateData);
+        try {
+          result = await applyTaskUpdate(PluginAPI, command.taskId, command.data || {});
+        } catch (e) {
+          return { success: false, error: e.message || String(e), timestamp: Date.now() };
         }
         break;
       }
@@ -396,7 +604,7 @@ async function executeCommand(command) {
         const results = [];
         for (const item of (command.updates || [])) {
           try {
-            await PluginAPI.updateTask(item.taskId, item.data || {});
+            await applyTaskUpdate(PluginAPI, item.taskId, item.data || {});
             results.push({ id: item.taskId, success: true });
           } catch (e) {
             results.push({ id: item.taskId, success: false, error: e.message || String(e) });
@@ -406,9 +614,9 @@ async function executeCommand(command) {
         break;
       }
       case 'startTask': {
-        // PluginAPI has no native timer control method, and dispatchAction has a whitelist
-        // that doesn't include task actions. Instead, we use updateTask to set currentTimestamp
-        // which is how SP internally tracks the active timer.
+        // Drive SP's REAL timer via the whitelisted NgRx action so the UI shows
+        // the ticking timer and SP accrues timeSpentOnDay natively. Also write
+        // task.currentTimestamp as a marker so loadCurrentTask can report it.
         const allTasksForStart = await PluginAPI.getTasks();
         const taskForStart = allTasksForStart.find(t => t.id === command.taskId);
         if (!taskForStart) {
@@ -422,19 +630,47 @@ async function executeCommand(command) {
         if (currentlyTracked) {
           await PluginAPI.updateTask(currentlyTracked.id, { currentTimestamp: null });
         }
+        PluginAPI.dispatchAction({ type: '[Task] SetCurrentTask', id: command.taskId });
         await PluginAPI.updateTask(command.taskId, { currentTimestamp: Date.now() });
         result = null;
         break;
       }
       case 'stopTask': {
-        // Find the currently tracked task and clear its currentTimestamp.
+        // Stop SP's real timer: unsetCurrentTask is NOT in the allowed-action
+        // whitelist, but setCurrentTask with id:null clears currentTaskId (same
+        // reducer effect). Then clear the marker. Idempotent — no error if
+        // nothing is being tracked.
+        PluginAPI.dispatchAction({ type: '[Task] SetCurrentTask', id: null });
         const allTasksForStop = await PluginAPI.getTasks();
         const tracked = allTasksForStop.find(t => t.currentTimestamp > 0);
         if (tracked) {
           await PluginAPI.updateTask(tracked.id, { currentTimestamp: null });
         }
-        // Idempotent — no error if nothing is being tracked
         result = null;
+        break;
+      }
+      case 'addTimeToday': {
+        // Agent-driven time tracking: add ms to today's bucket (timeSpentOnDay[today]) AND the
+        // total (timeSpent). The worklog sums timeSpentOnDay, so writing timeSpent alone would
+        // show the number but not the report. Mirrors SP's own addTimeSpent accounting.
+        const allTasksForTime = await PluginAPI.getTasks();
+        const taskForTime = allTasksForTime.find(t => t.id === command.taskId);
+        if (!taskForTime) {
+          return { success: false, error: `Task not found: ${command.taskId}`, timestamp: Date.now() };
+        }
+        const ms = Number(command.ms);
+        if (!isFinite(ms) || ms < 0) {
+          return { success: false, error: `Invalid ms: ${command.ms}`, timestamp: Date.now() };
+        }
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const timeSpentOnDay = Object.assign({}, taskForTime.timeSpentOnDay || {});
+        timeSpentOnDay[today] = (timeSpentOnDay[today] || 0) + ms;
+        await PluginAPI.updateTask(command.taskId, {
+          timeSpentOnDay,
+          timeSpent: (taskForTime.timeSpent || 0) + ms,
+        });
+        result = { timeSpentOnDay, timeSpent: (taskForTime.timeSpent || 0) + ms };
         break;
       }
       case 'deleteTask': {
@@ -450,7 +686,7 @@ async function executeCommand(command) {
       case 'createTaskWithSubtasks': {
         const parentData = command.data || {};
         const parentId = await PluginAPI.addTask({
-          title: parentData.title,
+          title: stripResidualDateTokens(parentData.title),
           notes: parentData.notes || '',
           projectId: parentData.projectId || undefined,
           tagIds: parentData.tagIds || [],
@@ -458,7 +694,7 @@ async function executeCommand(command) {
         const subtaskIds = [];
         for (const sub of (parentData.subtasks || [])) {
           const subId = await PluginAPI.addTask({
-            title: sub.title,
+            title: stripResidualDateTokens(sub.title),
             notes: sub.notes || '',
             parentId,
           });
@@ -467,7 +703,24 @@ async function executeCommand(command) {
         result = { parentId, subtaskIds };
         break;
       }
+      case 'getAppState': {
+        // Full state snapshot (tasks, projects, tags, taskRepeatCfgs, notes, counters, config...).
+        // All supported SP builds (18.16.0+) expose PluginAPI.getAppState; a missing method
+        // here means a build outside the support window — fail loudly rather than degrade.
+        if (typeof PluginAPI.getAppState !== 'function') {
+          return { success: false, error: `PluginAPI.getAppState is unavailable in this Super Productivity build (appVersion: ${getAppVersion()}). Super-Productivity-MCP requires SP ${MIN_SUP_VERSION}+.`, timestamp: Date.now() };
+        }
+        result = await PluginAPI.getAppState();
+        break;
+      }
       case 'getTaskRepeatCfgs': {
+        if (typeof PluginAPI.getAppState !== 'function') {
+          return {
+            success: false,
+            error: `PluginAPI.getAppState is unavailable in this Super Productivity build (appVersion: ${getAppVersion()}). Reading task repeat configs requires SP ${MIN_SUP_VERSION}+.`,
+            timestamp: Date.now(),
+          };
+        }
         const state = await PluginAPI.getAppState();
         // SP stores taskRepeatCfgs as { [id]: cfg } — convert to array so MCP consumers
         // don't need to know the internal map shape (consistent with get_projects / get_tags).
@@ -475,8 +728,79 @@ async function executeCommand(command) {
         result = Object.values(cfgMap);
         break;
       }
+      case 'batchUpdateForProject': {
+        // Atomic multi-op write for one project (SP 18.x): create/update/delete/reorder in a
+        // single transaction. tempId can be referenced by later operations (parents, reorder).
+        // SP 18.16's bridge loses same-batch temp refs, so resolve them here first.
+        result = await runBatchUpdateForProject(PluginAPI, command.data || {});
+        break;
+      }
+      case 'getActiveWorkContext': {
+        // Which work context (project / tag / TODAY) is currently active in the UI.
+        result = await PluginAPI.getActiveWorkContext();
+        break;
+      }
+      case 'getCurrentContextTasks': {
+        // Tasks currently rendered in the active work context.
+        result = await PluginAPI.getCurrentContextTasks();
+        break;
+      }
+      case 'getSelectedTask': {
+        // Task currently open in the detail panel (null when none).
+        result = await PluginAPI.getSelectedTask();
+        break;
+      }
+      case 'getFocusedTask': {
+        // Task row currently focused by the user (transient; null when none).
+        result = await PluginAPI.getFocusedTask();
+        break;
+      }
+      case 'selectTask': {
+        // Open a task (or subtask) in SP's detail panel.
+        await PluginAPI.selectTask(command.taskId);
+        result = null;
+        break;
+      }
+      case 'getAllCounters':
+        result = await PluginAPI.getAllCounters();
+        break;
+      case 'getCounter':
+        result = await PluginAPI.getCounter(command.counterId);
+        break;
+      case 'setCounter':
+        await PluginAPI.setCounter(command.counterId, Number(command.value));
+        result = null;
+        break;
+      case 'incrementCounter':
+        result = await PluginAPI.incrementCounter(command.counterId, command.incrementBy != null ? Number(command.incrementBy) : undefined);
+        break;
+      case 'decrementCounter':
+        result = await PluginAPI.decrementCounter(command.counterId, command.decrementBy != null ? Number(command.decrementBy) : undefined);
+        break;
+      case 'deleteCounter':
+        await PluginAPI.deleteCounter(command.counterId);
+        result = null;
+        break;
+      case 'reInitData':
+        // Force SP to reload persisted data (useful after agent-side file changes).
+        await PluginAPI.reInitData();
+        result = null;
+        break;
+      case 'getConfig':
+        // The plugin's own optional configuration (null unless a config handler is registered).
+        result = await PluginAPI.getConfig();
+        break;
+      case 'getNotes': {
+        if (typeof PluginAPI.getAppState !== 'function') {
+          return { success: false, error: 'getAppState unavailable on this Super Productivity build; cannot read notes.', timestamp: Date.now() };
+        }
+        const state = await PluginAPI.getAppState();
+        const notesMap = (state && state.notes) || {};
+        result = Object.values(notesMap);
+        break;
+      }
       case 'ping':
-        result = { pong: true, pluginVersion: '1.3.5', protocolVersion: PROTOCOL_VERSION };
+        result = { pong: true, pluginVersion: PLUGIN_VERSION, protocolVersion: PROTOCOL_VERSION, appVersion: getAppVersion(), minSupVersion: MIN_SUP_VERSION };
         break;
       default:
         return { success: false, error: `Unknown command action: ${command.action}`, timestamp: Date.now() };
@@ -572,4 +896,15 @@ if (typeof PluginAPI !== 'undefined' && typeof PluginAPI.onReady === 'function')
   PluginAPI.onReady(init);
 } else if (typeof PluginAPI !== 'undefined') {
   setTimeout(init, 500);
+}
+
+// onUnload (SP 18.16+): this is a code plugin, so the poll timer/listeners would otherwise
+// keep running after disable/reload/uninstall. Clear state so the next init() starts clean.
+if (typeof PluginAPI !== 'undefined' && typeof PluginAPI.onUnload === 'function') {
+  PluginAPI.onUnload(() => {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    lastProcessed = 0;
+    commandDir = null;
+    responseDir = null;
+  });
 }

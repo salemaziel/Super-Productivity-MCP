@@ -1,6 +1,6 @@
 {
   "name": "super-productivity-mcp",
-  "version": "1.3.5",
+  "version": "1.8.5",
   "description": "MCP server for Super Productivity — manage tasks, projects, and tags via AI assistants",
   "main": "dist/index.js",
   "bin": {
@@ -36,7 +36,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/b0x42/Super-Productivity-MCP.git"
+    "url": "git+https://github.com/salemaziel/Super-Productivity-MCP.git"
   },
   "overrides": {
     "ip-address": ">=10.2.0"

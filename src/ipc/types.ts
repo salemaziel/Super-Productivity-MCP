@@ -15,6 +15,13 @@ export interface Command {
   contextType?: 'project' | 'parent';
   // Fields for bulkUpdateTasks (003-FR-009)
   updates?: Array<{ taskId: string; data: Record<string, unknown> }>;
+  // Fields for addTimeToday (agent-driven time tracking)
+  ms?: number;
+  // Fields for counter tools
+  counterId?: string;
+  value?: number;
+  incrementBy?: number;
+  decrementBy?: number;
 }
 
 export interface TaskFilters {
@@ -29,6 +36,10 @@ export interface TaskFilters {
   unscheduled?: boolean;
   // Today filter (003-FR-006) — applied server-side
   plannedForToday?: boolean;
+  // Schedule-aware filters — applied server-side after getTasks()
+  scheduledOn?: string;
+  completedOn?: string;
+  overlapping?: boolean;
 }
 
 export interface Response {
