@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { existsSync } from 'node:fs';
 import type { ResolvedDirs } from '../ipc/directories.js';
@@ -5,11 +6,18 @@ import { sendCommand } from '../ipc/command-sender.js';
 import { errorResult, okResult } from './result.js';
 import { timePayload } from './time.js';
 
+// .strict() rejects unrecognized parameters instead of silently dropping them — see tasks.ts.
+
+const checkConnectionShape = {};
+export const checkConnectionSchema = z.object(checkConnectionShape).strict();
+
+const debugDirectoriesShape = {};
+export const debugDirectoriesSchema = z.object(debugDirectoriesShape).strict();
 
 export function registerDiagnosticTools(server: McpServer, dirs: ResolvedDirs): void {
   server.registerTool('check_connection', {
     description: 'Check if Super Productivity is running and the MCP Bridge plugin is responding. Also returns serverNow (current machine time) so agents never need to run a `date` command.',
-    inputSchema: {},
+    inputSchema: checkConnectionSchema,
   }, async () => {
     const res = await sendCommand(dirs, 'ping', {}, 5000);
     if (!res.success) return errorResult(res.error ?? 'Connection check failed');
@@ -18,7 +26,7 @@ export function registerDiagnosticTools(server: McpServer, dirs: ResolvedDirs): 
 
   server.registerTool('debug_directories', {
     description: 'Show resolved data directory paths and their existence status. No connection to Super Productivity required.',
-    inputSchema: {},
+    inputSchema: debugDirectoriesSchema,
   }, async () => {
     return okResult({
       base: dirs.base,

@@ -5,14 +5,29 @@ import { sendCommand } from '../ipc/command-sender.js';
 import { invalidateRefs } from '../enrich.js';
 import { errorResult, okResult } from './result.js';
 
+// .strict() rejects unrecognized parameters instead of silently dropping them — see tasks.ts.
+
+const createTagShape = {
+  title: z.string().describe('Tag title'),
+  color: z.string().optional().describe('Tag color (hex code, e.g. #FF9800)'),
+};
+export const createTagSchema = z.object(createTagShape).strict();
+
+const getTagsShape = {};
+export const getTagsSchema = z.object(getTagsShape).strict();
+
+const updateTagShape = {
+  tag_id: z.string().describe('Tag ID to update'),
+  title: z.string().optional().describe('New title'),
+  color: z.string().optional().describe('New color (hex code)'),
+  icon: z.string().optional().describe('New icon'),
+};
+export const updateTagSchema = z.object(updateTagShape).strict();
 
 export function registerTagTools(server: McpServer, dirs: ResolvedDirs): void {
   server.registerTool('create_tag', {
     description: 'Create a new tag in Super Productivity.',
-    inputSchema: {
-      title: z.string().describe('Tag title'),
-      color: z.string().optional().describe('Tag color (hex code, e.g. #FF9800)'),
-    },
+    inputSchema: createTagSchema,
   }, async ({ title, color }) => {
     if (!title?.trim()) return errorResult('Title is required');
     const data: Record<string, unknown> = { title };
@@ -25,7 +40,7 @@ export function registerTagTools(server: McpServer, dirs: ResolvedDirs): void {
 
   server.registerTool('get_tags', {
     description: 'Get all tags from Super Productivity.',
-    inputSchema: {},
+    inputSchema: getTagsSchema,
   }, async () => {
     const res = await sendCommand(dirs, 'getAllTags');
     if (!res.success) return errorResult(res.error ?? 'Failed to get tags');
@@ -34,12 +49,7 @@ export function registerTagTools(server: McpServer, dirs: ResolvedDirs): void {
 
   server.registerTool('update_tag', {
     description: 'Update an existing tag.',
-    inputSchema: {
-      tag_id: z.string().describe('Tag ID to update'),
-      title: z.string().optional().describe('New title'),
-      color: z.string().optional().describe('New color (hex code)'),
-      icon: z.string().optional().describe('New icon'),
-    },
+    inputSchema: updateTagSchema,
   }, async ({ tag_id, title, color, icon }) => {
     if (!tag_id?.trim()) return errorResult('tag_id is required');
     const data: Record<string, unknown> = {};

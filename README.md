@@ -1,3 +1,5 @@
+
+
 <p align="center">
   <img src="plugin/icon.svg" width="128" height="128" alt="SP MCP Bridge icon">
 </p>
@@ -68,6 +70,7 @@ Ask your assistant: "Check the Super Productivity connection." You should get a 
 ```bash
 npx -y @pir-ahmed-shah/super-productivity-mcp@latest --extract-plugin
 ```
+This command extracts `plugin.zip` to your current directory.
 
 This fetches the package and writes `plugin.zip` to the current folder. Upload it in **Settings → Plugins → Upload Plugin**, restart SP, and click **Allow** on the one-time Node execution consent dialog. The plugin requires SP 18.16.0+; older builds are refused with a clear error.
 
@@ -180,12 +183,13 @@ See [more use cases](docs/use-cases.md).
 | `get_tasks` | List tasks. Filter by project, tag, done, archived, search (title+notes), `parents_only`, `overdue`, `unscheduled`, `planned_for_today`, `recurring_only`, `scheduled_on`, `completed_on`, `overlapping`, `sort_by`/`sort_dir`, `fields`, `include_schedule`. Full objects expose `plannedTime` (the effective planned timestamp, SP `dueWithTime`). Derived schedule fields (`startTime`, `endTime`, `startMs`, `endMs`, `durationMs`, `status`) are computable via `fields` or `include_schedule` |
 | `get_schedule` | Time-blocked view of a date range: tasks sized by `timeEstimate` (duration) and placed by `plannedTime` (start). Returns `scheduled` (with computed start/end/status), `overlaps` (conflict clusters), `unscheduledInRange`, `completedInRange`, and a `summary`. Subtasks are included by default (matching SP's Today view); `include_subtasks: false` opts out and the response then reports hidden tasks via `filteredSubtasks`. All items include resolved `projectTitle` + `tags` |
 | `get_task` | Fully-resolved single-task deep-dive: enriched names, derived schedule block, parent title, subtask list, and time spent over the last 14 days |
-| `update_task` | Update title, notes, done state, due date, `due_with_time`, time, `time_spent_on_day` (per-day bucket corrections), tags |
+| `update_task` | Update title, notes, done state, due date, deadline (`deadline_day`), `due_with_time`, time, `time_spent_on_day` (per-day bucket corrections), tags |
 | `complete_task` | Mark a task as complete |
-| `delete_task` | Permanently delete a task (parent deletes subtasks too) |
+| `delete_task` | Permanently delete a task (parent deletes subtasks too). Archived tasks can't be deleted — SP's plugin API is read-only for the archive |
 | `start_task` | Start the time tracker on a task |
 | `stop_task` | Stop the currently running time tracker |
 | `add_time_today` | Add elapsed milliseconds to a task's today bucket. Fallback/correction since 1.7.2 (`timeSpentOnDay[today]`, which the worklog sums, plus `timeSpent`). Returns the updated task |
+| `log_time` | Log time spent on a task — one day, or several at once via `entries` for backfill. Adds to each day's tracked time, or overwrites with `mode: "set"` |
 | `get_current_task` | Get the currently tracked task (null if none) |
 | `select_task` | Open a task in SP's detail panel (works regardless of the active view) |
 | `get_selected_task` | The task currently open in SP's detail panel (null if none) |
@@ -206,6 +210,12 @@ See [more use cases](docs/use-cases.md).
 | `create_tag` | Create a new tag |
 | `update_tag` | Update tag properties |
 | `get_task_repeat_cfgs` | List all recurring task configurations (schedule, cadence, day-of-week settings) |
+| `create_habit` | Create a habit (streak-tracked click counter) |
+| `get_habits` | List all habits, including each one's computed streak length |
+| `update_habit` | Update habit title, icon, enabled state, or streak config |
+| `check_habit` | Check off a habit for a day (increments that day's value, defaults to today) |
+| `set_habit_value` | Set a habit's exact value for a day — backfill or correct history |
+| `delete_habit` | Permanently delete a habit |
 | `get_worklog` | Time tracking summary for a date range |
 | `show_notification` | Show a snackbar in SP's UI |
 | `get_time` | Current machine date/time (local tz): `epochMs`, `iso`, `localDate`, `localTime`, `dayOfWeek`, `timezone` |
@@ -250,6 +260,59 @@ Project/tag lookups are cached server-side (30s TTL) and invalidated automatical
 - **`due_with_time` is a follow-up write, not part of the atomic batch (≥ 1.8.5):** SP's batch update ops only support `title/notes/isDone/parentId/timeEstimate/subTaskIds` and *silently drop* any other field (see #14) — `due_with_time` is applied right after the batch via a `bulkUpdateTasks` write (floored to the whole minute; `null` unplans). The call reports `plannedTimeApplied` and echoes the affected tasks under `tasks`, so the whole call stays verifiable in one round-trip. A failed follow-up lands in `errors` with a "planned-time follow-up failed" prefix.
 - On partial failure SP drops skipped operations silently (logged server-side), so verify the result.
 
+Habit tools (`create_habit`, `get_habits`, `update_habit`, `check_habit`, `set_habit_value`, `delete_habit`) may require a Super Productivity build newer than the `18.16.0` minimum — on older builds they return a clear "requires a newer version" error instead of failing silently.
+
+## Time Tracking
+
+Super Productivity stores time spent as a **per-day worklog** (`timeSpentOnDay`,
+a map of `YYYY-MM-DD` to milliseconds). The task's total, `timeSpent`, is always
+derived from it — SP recomputes the total on every write, and a parent task's
+time is the aggregate of its subtasks.
+
+This server follows that model:
+
+- **Reading** — both fields are available on `get_tasks`, including via field
+  selection: `fields: ["timeSpent", "timeSpentOnDay"]`. They also appear in the
+  `sp://tasks` resource summary. `get_worklog` aggregates the map across tasks
+  by day, project, and tag.
+- **Writing** — prefer `log_time`, which writes the day map, recomputes the total
+  the way SP does, and rolls the change up to the parent task. `add_time_today`
+  and `update_task`/`bulk_update_tasks` `time_spent_on_day` (per-day bucket
+  corrections) also keep the map and total in step. A bare `time_spent` on
+  `update_task`/`bulk_update_tasks` is still accepted for direct corrections, but
+  a total no worklog accounts for is discarded by SP at the next time write.
+
+```jsonc
+// one day
+{ "task_id": "abc", "duration": "1h30m" }               // defaults to today
+// several days, e.g. backfilling a week
+{ "task_id": "abc", "entries": [
+    { "date": "2026-08-30", "duration": "2h" },
+    { "date": "2026-08-31", "duration": "45m" }
+] }
+```
+
+If a task's stored total disagreed with its worklog before the write — which
+happens with data imported from other tools — `log_time` recomputes from the
+worklog and reports the old value as `previousTimeSpent`, so the correction is
+visible rather than silent.
+
+## Tool Call Timeline
+
+The plugin adds a **MCP Bridge** pane to Super Productivity's menu listing what
+the assistant has done — one row per tool call with the time, tool name,
+duration, and whether it succeeded. Click a row to see the arguments it was
+called with and the result it returned; failures show the error message.
+
+The server writes each call to `tool-calls.jsonl` in the same data directory it
+uses for IPC (`debug_directories` shows the path). The log keeps the most recent
+500 calls and is created mode 0600. Individual arguments or results over 8KB are
+replaced by a marker recording how many bytes were elided, so a `get_tasks` over
+a large task list doesn't copy your database into a flat file.
+
+Recording is best-effort: if the log can't be written, the tool call still
+succeeds and returns normally.
+
 ## SP short syntax
 
 Include these in task titles and they are parsed automatically:
@@ -288,6 +351,21 @@ See the [full troubleshooting guide](docs/troubleshooting.md).
 - **1 minute is the smallest scheduling unit.** Every planned-time write (`update_task`, `bulk_update_tasks`, `plan_tasks_for_today(plan_from_now)`, and `batch_update_project`'s follow-up) is **floored to the whole minute** on the server before it reaches SP — sub-minute timestamps (e.g. raw `Date.now()` at `15:45:46.715`) are rounded DOWN. SP renders times at HH:mm only, so an unfloored `due_with_time` could produce a seconds-level overlap that every rendered time denies (see #13); normalization at the write boundary makes back-to-back blocks safe no matter what the agent passes in. `batch_update_project`'s `due_with_time` is applied via a follow-up `bulkUpdateTasks` write after the batch (SP's batch engine cannot carry it — see #14).
 - `@friday 3pm` in a title sets the due date and the exact planned time; `@friday` sets the due date only.
 - To verify a write, read the task's `plannedTime` (alias of `dueWithTime`) from the write response or `get_tasks`. The tools return the resulting task so bad input is caught immediately.
+
+## Known limitations
+
+| Tool | Issue | Status |
+|------|-------|--------|
+| `create_project` / `update_project` | `folder_id` can be set or cleared, but there's no way to list folders through this server — the plugin API exposes no folder getter. Get the ID from the Super Productivity UI. | Upstream request: [super-productivity#9600](https://github.com/super-productivity/super-productivity/issues/9600) |
+
+## Local deployment documentation
+
+For a pinned source-based macOS deployment, see:
+
+- [macOS setup and operations](docs/macos-setup.md)
+- [Troubleshooting](docs/troubleshooting.md)
+
+For local development, the `Makefile` wraps the `npm run build`/`typecheck`/`lint`/`test` steps above with dependency tracking — see `AGENTS.md`.
 
 ## License
 

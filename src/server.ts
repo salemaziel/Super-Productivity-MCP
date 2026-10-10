@@ -5,6 +5,7 @@ import { cleanStaleFiles } from './ipc/command-sender.js';
 import { registerTaskTools } from './tools/tasks.js';
 import { registerProjectTools } from './tools/projects.js';
 import { registerTagTools } from './tools/tags.js';
+import { registerHabitTools } from './tools/habits.js';
 import { registerNotificationTools } from './tools/notifications.js';
 import { registerDiagnosticTools } from './tools/diagnostics.js';
 import { registerTimeTools } from './tools/time.js';
@@ -14,6 +15,24 @@ import { registerContextTools } from './tools/context.js';
 import { registerStateTools } from './tools/state.js';
 import { registerCounterTools } from './tools/counters.js';
 import { registerResources } from './resources/index.js';
+import { createRecorder } from './recording/recorder.js';
+import { instrumentServer } from './recording/instrument.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * Read the version from package.json rather than repeating it here — the
+ * hardcoded copy went stale at the 1.7.0 release without anything noticing.
+ * The relative path resolves the same from src/ and from the bundled dist/.
+ */
+export function readPackageVersion(): string {
+  try {
+    const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+    return JSON.parse(readFileSync(pkgPath, 'utf-8')).version as string;
+  } catch {
+    return '0.0.0';
+  }
+}
 
 export function createServer(): { server: McpServer; dirs: ResolvedDirs } {
   const dirs = resolveDirectories();
@@ -21,21 +40,26 @@ export function createServer(): { server: McpServer; dirs: ResolvedDirs } {
 
   const server = new McpServer({
     name: 'super-productivity',
-    version: '1.7.0',
+    version: readPackageVersion(),
   });
 
-  registerTaskTools(server, dirs);
-  registerProjectTools(server, dirs);
-  registerTagTools(server, dirs);
-  registerNotificationTools(server, dirs);
-  registerDiagnosticTools(server, dirs);
-  registerTimeTools(server);
-  registerScheduleTools(server, dirs);
-  registerBatchTools(server, dirs);
-  registerContextTools(server, dirs);
-  registerStateTools(server, dirs);
-  registerCounterTools(server, dirs);
-  registerResources(server, dirs);
+  // Every tool registers through the instrumented wrapper, so all of them are
+  // recorded without a per-tool change. Non-tool members pass straight through.
+  const recording = instrumentServer(server, createRecorder(dirs));
+
+  registerTaskTools(recording, dirs);
+  registerProjectTools(recording, dirs);
+  registerTagTools(recording, dirs);
+  registerHabitTools(recording, dirs);
+  registerNotificationTools(recording, dirs);
+  registerDiagnosticTools(recording, dirs);
+  registerTimeTools(recording);
+  registerScheduleTools(recording, dirs);
+  registerBatchTools(recording, dirs);
+  registerContextTools(recording, dirs);
+  registerStateTools(recording, dirs);
+  registerCounterTools(recording, dirs);
+  registerResources(recording, dirs);
 
   return { server, dirs };
 }

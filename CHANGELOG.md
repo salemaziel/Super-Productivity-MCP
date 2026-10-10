@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions align with the SP plugin manifest and the npm package.
 
+## [1.9.0] — 2026-10-09
+
+### Added (merged from upstream b0x42/Super-Productivity-MCP 1.6.2)
+- Habit tools: `create_habit`, `get_habits` (with computed streaks), `update_habit`, `check_habit`, `set_habit_value`, `delete_habit`.
+- `log_time` (single day or multi-day `entries`, `add`/`set` modes, rolls up to the parent task).
+- `deadline_day` on `create_task`, `update_task`, `bulk_update_tasks`.
+- Strict (`.strict()`) input schemas on task/project/tag/habit/diagnostic tools — unknown parameters are rejected instead of silently dropped. Fork fields (`due_with_time`, `time_spent`, `time_spent_on_day`, `is_done` on bulk items, `plan_from_now`, `get_tasks` schedule filters/sorting, `get_task`, `add_time_today`) were added to those strict schemas.
+- `folder_id` on `create_project` / `update_project`; `description` on `update_project`.
+- Tool-call recording timeline (`tool-calls.jsonl`) and the MCP Bridge pane in SP.
+- Plugin reports its version from `PLUGIN_VERSION` (kept equal to the manifest by a unit test); the server reads its version from package.json.
+- macOS IPC directory paths, Makefile, dependency bumps, macOS setup docs.
+
+### Kept (fork behavior)
+- SP 18.16.0+ version gate, `dueWithTime` scheduling, start/stop via `[Task] SetCurrentTask`, `add_time_today`, `time_spent` / `time_spent_on_day` corrections (upstream removed `time_spent`; the fork keeps it), batch two-phase planned-time split, short-syntax scrub, and all fork-only tools.
+
 ## [1.8.5] — 2026-08-08
 
 ### Fixed

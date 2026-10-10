@@ -6,11 +6,26 @@
 
 ```bash
 npm run build        # compile MCP server (tsup) + zip plugin → dist/plugin.zip
+npm run build:server # tsup only — dist/index.js
+npm run build:plugin # inline the pane into index.html, then zip → dist/plugin.zip
 npm run dev          # watch mode
 npm test             # vitest run
 npm run test:watch   # vitest watch
 npm run typecheck    # tsc --noEmit (use this, not npx tsc — tsc not in PATH)
 npm run lint         # eslint src/
+```
+
+A Makefile wraps these; the npm scripts stay the source of truth (CI and
+`prepublishOnly` call them directly). What it adds is dependency tracking —
+`dist/index.js` and `dist/plugin.zip` are real file targets, so an unchanged
+tree rebuilds nothing.
+
+```bash
+make                 # build both artifacts
+make verify          # typecheck + lint + test — the pre-commit gate
+make mcp-add         # register with Claude Code (SCOPE=local to override)
+make mcp-remove
+make clean
 ```
 
 ## Architecture
@@ -38,6 +53,8 @@ src/
     counters.ts         # simple counters (get/set/inc/dec/delete/all)
     schedule.ts         # get_schedule (time-blocked view + overlap clusters)
     time.ts             # get_time
+    habits.ts           # get_habits, create_habit, update_habit, check_habit, set_habit_value, delete_habit
+    habit-streak.ts     # streak computation, ported from SP's own algorithm (pure, unit-tested)
     notifications.ts    # show_notification
     diagnostics.ts      # debug tool
     result.ts           # okResult() / errorResult() helpers
@@ -67,7 +84,7 @@ SP has no IndexedDB indexes on `tagIds`/`projectId` — filtering is always O(n)
 ## Gotchas
 
 - `npx tsc` pulls a wrong package — always use `npm run typecheck`
-- `npm run build` also runs `build:plugin` (zips `plugin/` → `dist/plugin.zip`) — don't run tsup alone
+- `npm run build` produces both artifacts (`dist/index.js` + `dist/plugin.zip`) — `build:server`/`tsup` alone only produces `dist/index.js`. Use `build:server` when you deliberately only need the server rebuilt; use `build` (or `make build`) for a deployable plugin zip
 - TypeScript 6 requires `"types": ["node"]` in tsconfig (already set) — removing it breaks all `node:` imports
 - Planned time lives in SP's `dueWithTime`, not `plannedAt` (obsolete, always null in current SP). Always read/write `dueWithTime`; responses expose it as `plannedTime`. `update_task`'s canonical param is `due_with_time` (`planned_at` is a deprecated alias).
 - Plugin version (manifest.json + `PLUGIN_VERSION` in plugin.js) must stay in sync with package.json — `release.yml` fails a tag if they drift, and `check_connection` surfaces `pluginVersion`.

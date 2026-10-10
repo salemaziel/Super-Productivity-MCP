@@ -17,6 +17,7 @@ interface TaskRecord {
   dueWithTime?: number | null;
   timeEstimate: number;
   timeSpent: number;
+  timeSpentOnDay?: Record<string, number>;
   [key: string]: unknown;
 }
 
@@ -42,6 +43,7 @@ function shapeTask(t: TaskRecord, refs: Refs): EnrichedTask<{
     plannedTime: plannedTimeOf(t),
     timeEstimate: t.timeEstimate,
     timeSpent: t.timeSpent,
+    timeSpentOnDay: t.timeSpentOnDay ?? {},
     parentId: t.parentId ?? null,
     isDone: t.isDone,
   }, refs);

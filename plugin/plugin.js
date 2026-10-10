@@ -1,6 +1,6 @@
 // MCP Bridge Plugin for Super Productivity
-// Keep PLUGIN_VERSION in sync with manifest.json "version".
-const PLUGIN_VERSION = '1.8.5';
+// Kept in step with plugin/manifest.json "version" by tests/unit/plugin/version.test.ts.
+const PLUGIN_VERSION = '1.9.0';
 const PROTOCOL_VERSION = 1;
 // This plugin is built for SP 18.16.0 only; older builds are refused with a clear error
 // instead of silently degrading (no marker-only timer fallback, no legacy plannedAt paths).
@@ -255,7 +255,62 @@ async function runBatchUpdateForProject(api, data) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { parseAtDateSyntax, stripResidualDateTokens, mergeTimeSpentOnDay, applyTaskUpdate, runBatchUpdateForProject, rewriteBatchOp, isAtLeast, MIN_SUP_VERSION };
+  module.exports = { parseAtDateSyntax, stripResidualDateTokens, mergeTimeSpentOnDay, applyTaskUpdate, runBatchUpdateForProject, rewriteBatchOp, isAtLeast, MIN_SUP_VERSION, executeCommand, PLUGIN_VERSION };
+}
+
+// Set one or more days in a timeSpentOnDay map and recompute the derived total.
+// SP stores timeSpent as the sum of the per-day map, and PluginAPI exposes no
+// addTimeSpent action to keep them in sync — writing timeSpentOnDay through the
+// generic updateTask means we own that recomputation. A day that lands on zero is
+// removed rather than kept, so get_worklog never reports a day with no work on it.
+// The total is summed once at the end, not per day.
+function applyDayTimes(timeSpentOnDay, changes) {
+  const map = Object.assign({}, timeSpentOnDay || {});
+  for (const change of changes) {
+    if (change.ms > 0) {
+      map[change.date] = change.ms;
+    } else {
+      delete map[change.date];
+    }
+  }
+  return { timeSpentOnDay: map, timeSpent: sumDayMap(map) };
+}
+
+function sumDayMap(map) {
+  return Object.keys(map || {}).reduce((sum, key) => sum + (map[key] || 0), 0);
+}
+
+// Local YYYY-MM-DD for "today", matching how SP's own getDbDateStr keys countOnDay
+// (local calendar day, not UTC — avoids shifting a day in positive timezones).
+function todayLocalDateStr() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+// Habit (SimpleCounter) full-model PluginAPI methods shipped in a later SP release
+// than this plugin's declared minSupVersion — probe before use instead of letting
+// a "not a function" TypeError leak out of the plugin sandbox.
+function missingHabitApiError() {
+  const required = ['getAllSimpleCounters', 'getSimpleCounter', 'updateSimpleCounter', 'setSimpleCounterDate', 'deleteSimpleCounter', 'setCounter'];
+  const missing = required.filter(fn => typeof PluginAPI[fn] !== 'function');
+  return missing.length ? 'Habit management requires a newer version of Super Productivity.' : null;
+}
+
+// PluginAPI exposes getArchivedTasks() for reading but nothing that removes from
+// the archive, so an archived task can be seen and never deleted. Reporting it as
+// "not found" is misleading for a task get_tasks will happily return — name the
+// real reason and say where deletion is possible. Probed defensively: older SP
+// builds may not expose the archive at all, and a failure here must not turn a
+// clear error into a thrown one.
+async function archivedTaskError(taskId) {
+  if (typeof PluginAPI.getArchivedTasks !== 'function') return null;
+  try {
+    const archived = await PluginAPI.getArchivedTasks();
+    if (!archived.some(t => t.id === taskId)) return null;
+    return `Task ${taskId} is archived. Archived tasks cannot be deleted through the plugin API — remove it from the archive in Super Productivity.`;
+  } catch (e) {
+    return null;
+  }
 }
 
 async function setupDirectories() {
@@ -270,9 +325,12 @@ async function setupDirectories() {
       const TMP_DATA_DIR = path.join(TMP_ROOT, APP);
       let candidates;
       if (os.platform() === 'darwin') {
+        // Native macOS builds use ~/Library/Application Support. Keep the
+        // Mac App Store container as a fallback, but do not let a stale Store
+        // directory shadow a working native installation.
         candidates = [
-          path.join(home, 'Library', 'Containers', 'com.super-productivity.app', 'Data', 'Library', 'Application Support', APP),
-          path.join(home, 'Library', 'Application Support', APP)
+          path.join(home, 'Library', 'Application Support', APP),
+          path.join(home, 'Library', 'Containers', 'com.super-productivity.app', 'Data', 'Library', 'Application Support', APP)
         ];
       } else if (os.platform() === 'win32') {
         const appData = (typeof process !== 'undefined' && process.env && process.env.APPDATA) || path.join(home, 'AppData', 'Roaming');
@@ -453,6 +511,12 @@ async function executeCommand(command) {
         } else if (result) {
           await PluginAPI.updateTask(result, { dueWithTime: null, dueDay: null });
         }
+        // PluginAPI.addTask() silently ignores fields outside its own known creation
+        // set (same reason dueDay above needs a follow-up updateTask) — deadlineDay
+        // passed via the initial addTask({ ...d }) spread never actually persists.
+        if (result && 'deadlineDay' in d) {
+          await PluginAPI.updateTask(result, { deadlineDay: d.deadlineDay });
+        }
         break;
       }
       case 'getTasks': {
@@ -601,8 +665,16 @@ async function executeCommand(command) {
         break;
       }
       case 'bulkUpdateTasks': {
+        // PluginAPI.updateTask() no-ops (doesn't throw) for a nonexistent taskId — same
+        // quirk startTask works around below — so an invalid task_id here would silently
+        // report success without a pre-check, contradicting the partial-success spec.
+        const allTaskIdsForBulkUpdate = new Set((await PluginAPI.getTasks()).map(t => t.id));
         const results = [];
         for (const item of (command.updates || [])) {
+          if (!allTaskIdsForBulkUpdate.has(item.taskId)) {
+            results.push({ id: item.taskId, success: false, error: `Task not found: ${item.taskId}` });
+            continue;
+          }
           try {
             await applyTaskUpdate(PluginAPI, item.taskId, item.data || {});
             results.push({ id: item.taskId, success: true });
@@ -673,11 +745,70 @@ async function executeCommand(command) {
         result = { timeSpentOnDay, timeSpent: (taskForTime.timeSpent || 0) + ms };
         break;
       }
+      case 'logTimeEntries': {
+        // PluginAPI has no addTimeSpent equivalent, and updateTask() silently no-ops on
+        // an unknown id (the quirk bulkUpdateTasks and startTask guard against), so the
+        // task has to be looked up before anything is written.
+        const logData = command.data || {};
+        const logEntries = logData.entries;
+        const allTasksForLog = await PluginAPI.getTasks();
+        const taskForLog = allTasksForLog.find(t => t.id === command.taskId);
+        if (!taskForLog) {
+          return { success: false, error: `Task not found: ${command.taskId}`, timestamp: Date.now() };
+        }
+
+        const existingDays = taskForLog.timeSpentOnDay || {};
+        // SP always derives timeSpent from this map. A task whose stored total
+        // disagrees came from outside SP's reducers; recomputing corrects it, and
+        // the old value is reported back so the correction isn't silent.
+        const sumBefore = sumDayMap(existingDays);
+
+        const dayChanges = [];
+        const parentDeltas = [];
+        for (const entry of logEntries) {
+          const previous = existingDays[entry.date] || 0;
+          const next = logData.mode === 'set' ? entry.durationMs : previous + entry.durationMs;
+          dayChanges.push({ date: entry.date, ms: next });
+          if (next !== previous) parentDeltas.push({ date: entry.date, delta: next - previous });
+        }
+
+        const updated = applyDayTimes(existingDays, dayChanges);
+        await PluginAPI.updateTask(command.taskId, updated);
+
+        // SP treats a parent's tracked time as the aggregate of its subtasks, so the same
+        // deltas have to land on the parent — otherwise the parent and get_worklog's
+        // project totals drift from the subtask that actually recorded the work. All the
+        // affected days go in one update rather than one write per day.
+        if (taskForLog.parentId && parentDeltas.length) {
+          const parentForLog = allTasksForLog.find(t => t.id === taskForLog.parentId);
+          if (parentForLog) {
+            const parentDays = parentForLog.timeSpentOnDay || {};
+            const parentChanges = parentDeltas.map(function (d) {
+              return { date: d.date, ms: Math.max(0, (parentDays[d.date] || 0) + d.delta) };
+            });
+            await PluginAPI.updateTask(parentForLog.id, applyDayTimes(parentDays, parentChanges));
+          }
+        }
+
+        result = {
+          taskId: command.taskId,
+          dates: logEntries.map(function (e) { return e.date; }),
+          timeSpentOnDay: updated.timeSpentOnDay,
+          timeSpent: updated.timeSpent,
+        };
+        if (taskForLog.timeSpent !== sumBefore) result.previousTimeSpent = taskForLog.timeSpent;
+        break;
+      }
       case 'deleteTask': {
         const allTasksForDelete = await PluginAPI.getTasks();
         const taskToDelete = allTasksForDelete.find(t => t.id === command.taskId);
         if (!taskToDelete) {
-          return { success: false, error: `Task not found: ${command.taskId}`, timestamp: Date.now() };
+          const archivedError = await archivedTaskError(command.taskId);
+          return {
+            success: false,
+            error: archivedError || `Task not found: ${command.taskId}`,
+            timestamp: Date.now(),
+          };
         }
         await PluginAPI.deleteTask(command.taskId);
         result = null;
@@ -797,6 +928,96 @@ async function executeCommand(command) {
         const state = await PluginAPI.getAppState();
         const notesMap = (state && state.notes) || {};
         result = Object.values(notesMap);
+        break;
+      }
+      case 'getAllHabits': {
+        const habitApiError = missingHabitApiError();
+        if (habitApiError) return { success: false, error: habitApiError, timestamp: Date.now() };
+        const allCounters = await PluginAPI.getAllSimpleCounters();
+        // Habit tools only manage streak-tracked click counters — StopWatch and
+        // RepeatedCountdownReminder are a different SP feature sharing this same store.
+        result = (allCounters || []).filter(c => c.type === 'ClickCounter');
+        break;
+      }
+      case 'addHabit': {
+        const habitApiError = missingHabitApiError();
+        if (habitApiError) return { success: false, error: habitApiError, timestamp: Date.now() };
+        const dHabit = command.data || {};
+        // No native create call. setSimpleCounterDate throws if the id doesn't exist yet
+        // (it's absolute-set, not upsert) — setCounter is the one that upserts-on-missing,
+        // creating a default ClickCounter. updateSimpleCounter immediately after applies
+        // the caller's real config before anything else can observe the placeholder state.
+        const newHabitId = 'habit_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+        await PluginAPI.setCounter(newHabitId, 0);
+        const habitCfg = { title: dHabit.title, type: 'ClickCounter' };
+        if (dHabit.icon !== undefined) habitCfg.icon = dHabit.icon;
+        if (dHabit.isTrackStreaks !== undefined) habitCfg.isTrackStreaks = dHabit.isTrackStreaks;
+        if (dHabit.streakMode !== undefined) habitCfg.streakMode = dHabit.streakMode;
+        if (dHabit.streakMinValue !== undefined) habitCfg.streakMinValue = dHabit.streakMinValue;
+        if (dHabit.streakWeekDays !== undefined) habitCfg.streakWeekDays = dHabit.streakWeekDays;
+        if (dHabit.streakWeeklyFrequency !== undefined) habitCfg.streakWeeklyFrequency = dHabit.streakWeeklyFrequency;
+        await PluginAPI.updateSimpleCounter(newHabitId, habitCfg);
+        result = newHabitId;
+        break;
+      }
+      case 'updateHabit': {
+        const habitApiError = missingHabitApiError();
+        if (habitApiError) return { success: false, error: habitApiError, timestamp: Date.now() };
+        const existingForUpdate = await PluginAPI.getSimpleCounter(command.habitId);
+        if (!existingForUpdate) {
+          return { success: false, error: `Habit not found: ${command.habitId}`, timestamp: Date.now() };
+        }
+        await PluginAPI.updateSimpleCounter(command.habitId, command.data || {});
+        result = null;
+        break;
+      }
+      case 'setHabitValue': {
+        const habitApiError = missingHabitApiError();
+        if (habitApiError) return { success: false, error: habitApiError, timestamp: Date.now() };
+        const dSetValue = command.data || {};
+        // Default "today" is computed here (plugin/Electron-renderer clock), not by the
+        // MCP server — the server and SP can run on different machines/timezones, and
+        // this must agree with checkHabit's default for the same reason.
+        const setValueDate = dSetValue.date || todayLocalDateStr();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(setValueDate)) {
+          return { success: false, error: 'Invalid date format: use YYYY-MM-DD', timestamp: Date.now() };
+        }
+        const existingForSetValue = await PluginAPI.getSimpleCounter(command.habitId);
+        if (!existingForSetValue) {
+          return { success: false, error: `Habit not found: ${command.habitId}`, timestamp: Date.now() };
+        }
+        await PluginAPI.setSimpleCounterDate(command.habitId, setValueDate, dSetValue.value);
+        result = null;
+        break;
+      }
+      case 'checkHabit': {
+        const habitApiError = missingHabitApiError();
+        if (habitApiError) return { success: false, error: habitApiError, timestamp: Date.now() };
+        const dCheck = command.data || {};
+        const checkDate = dCheck.date || todayLocalDateStr();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(checkDate)) {
+          return { success: false, error: 'Invalid date format: use YYYY-MM-DD', timestamp: Date.now() };
+        }
+        const existingForCheck = await PluginAPI.getSimpleCounter(command.habitId);
+        if (!existingForCheck) {
+          return { success: false, error: `Habit not found: ${command.habitId}`, timestamp: Date.now() };
+        }
+        // Mirrors the Habit Tracker UI's own click behavior: increment the day's
+        // count, don't overwrite it — toggleSimpleCounter is unrelated (StopWatch-only).
+        const currentValue = (existingForCheck.countOnDay && existingForCheck.countOnDay[checkDate]) || 0;
+        await PluginAPI.setSimpleCounterDate(command.habitId, checkDate, currentValue + 1);
+        result = currentValue + 1;
+        break;
+      }
+      case 'deleteHabit': {
+        const habitApiError = missingHabitApiError();
+        if (habitApiError) return { success: false, error: habitApiError, timestamp: Date.now() };
+        const existingForDelete = await PluginAPI.getSimpleCounter(command.habitId);
+        if (!existingForDelete) {
+          return { success: false, error: `Habit not found: ${command.habitId}`, timestamp: Date.now() };
+        }
+        await PluginAPI.deleteSimpleCounter(command.habitId);
+        result = null;
         break;
       }
       case 'ping':

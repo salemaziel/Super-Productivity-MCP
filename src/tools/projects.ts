@@ -5,20 +5,56 @@ import { sendCommand } from '../ipc/command-sender.js';
 import { invalidateRefs } from '../enrich.js';
 import { errorResult, okResult } from './result.js';
 
+// .strict() rejects unrecognized parameters instead of silently dropping them — see tasks.ts.
+
+const createProjectShape = {
+  title: z.string().describe('Project title'),
+  description: z.string().optional().describe('Project description'),
+  color: z.string().optional().describe('Project color (hex code, e.g. #2196F3)'),
+  folder_id: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'ID of the folder to place the project in (from the Super Productivity UI), or null to leave unfiled',
+    ),
+};
+export const createProjectSchema = z.object(createProjectShape).strict();
+
+const getProjectsShape = {};
+export const getProjectsSchema = z.object(getProjectsShape).strict();
+
+const updateProjectShape = {
+  project_id: z.string().describe('Project ID to update'),
+  title: z.string().optional().describe('New title'),
+  description: z.string().optional().describe('New description'),
+  color: z.string().optional().describe('New color (hex code)'),
+  folder_id: z
+    .string()
+    .nullable()
+    .optional()
+    .describe(
+      'ID of the folder to move the project into (from the Super Productivity UI), or null to clear it',
+    ),
+};
+export const updateProjectSchema = z.object(updateProjectShape).strict();
 
 export function registerProjectTools(server: McpServer, dirs: ResolvedDirs): void {
   server.registerTool('create_project', {
-    description: 'Create a new project in Super Productivity.',
-    inputSchema: {
-      title: z.string().describe('Project title'),
-      description: z.string().optional().describe('Project description'),
-      color: z.string().optional().describe('Project color (hex code, e.g. #2196F3)'),
-    },
-  }, async ({ title, description, color }) => {
+    description:
+      'Create a new project in Super Productivity. Note: folder_id must be obtained from the ' +
+      'Super Productivity UI — this server has no way to list folders. Pass folder_id: null (or ' +
+      'omit it) to leave the project unfiled.',
+    inputSchema: createProjectSchema,
+  }, async ({ title, description, color, folder_id }) => {
     if (!title?.trim()) return errorResult('Title is required');
+    if (folder_id !== undefined && folder_id !== null && !folder_id.trim()) {
+      return errorResult('folder_id must not be empty');
+    }
     const data: Record<string, unknown> = { title };
-    if (description) data.description = description;
+    if (description !== undefined) data.description = description;
     if (color) data.theme = { primary: color };
+    if (folder_id !== undefined) data.folderId = folder_id;
     const res = await sendCommand(dirs, 'addProject', { data });
     if (!res.success) return errorResult(res.error ?? 'Failed to create project');
     invalidateRefs(dirs);
@@ -27,7 +63,7 @@ export function registerProjectTools(server: McpServer, dirs: ResolvedDirs): voi
 
   server.registerTool('get_projects', {
     description: 'Get all projects from Super Productivity.',
-    inputSchema: {},
+    inputSchema: getProjectsSchema,
   }, async () => {
     const res = await sendCommand(dirs, 'getAllProjects');
     if (!res.success) return errorResult(res.error ?? 'Failed to get projects');
@@ -35,17 +71,21 @@ export function registerProjectTools(server: McpServer, dirs: ResolvedDirs): voi
   });
 
   server.registerTool('update_project', {
-    description: 'Update an existing project.',
-    inputSchema: {
-      project_id: z.string().describe('Project ID to update'),
-      title: z.string().optional().describe('New title'),
-      color: z.string().optional().describe('New color (hex code)'),
-    },
-  }, async ({ project_id, title, color }) => {
+    description:
+      'Update an existing project. Note: folder_id must be obtained from the Super Productivity ' +
+      'UI — this server has no way to list folders. Pass folder_id: null to clear the folder ' +
+      'assignment (move the project back to the root); omit folder_id to leave it unchanged.',
+    inputSchema: updateProjectSchema,
+  }, async ({ project_id, title, description, color, folder_id }) => {
     if (!project_id?.trim()) return errorResult('project_id is required');
+    if (folder_id !== undefined && folder_id !== null && !folder_id.trim()) {
+      return errorResult('folder_id must not be empty');
+    }
     const data: Record<string, unknown> = {};
     if (title !== undefined) data.title = title;
+    if (description !== undefined) data.description = description;
     if (color !== undefined) data.theme = { primary: color };
+    if (folder_id !== undefined) data.folderId = folder_id;
     const res = await sendCommand(dirs, 'updateProject', { projectId: project_id, data });
     if (!res.success) return errorResult(res.error ?? 'Failed to update project');
     invalidateRefs(dirs);
